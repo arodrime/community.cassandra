@@ -13,6 +13,8 @@
 #            the Cassandra package's version, whether its unit runs
 #   dirs:    the system keyspace in the candidate data dirs, the dirs tried as
 #            Cassandra's account, the data dirs' subdirs another account owns
+#   users:   the files of OS users' ~/.cassandra the role writes (cqlsh's, nodetool's), against the ones rendered
+#            on the controller: those to write, and why (no content said: they hold passwords)
 #   compare: the new files (rendered on the controller) checked and diffed
 #            against the live ones (secrets masked), the live ones that differ
 #            (and their sha1: the role's header is added to them only as read),
@@ -514,7 +516,40 @@ def step_compare(req):
     return answer
 
 
-STEPS = {"node": step_node, "dirs": step_dirs, "compare": step_compare}
+HOME = "@@CASSANDRA_HOME@@"  # in a rendered file: the user's home, known on the node only
+
+
+def step_users(req):
+    """req: {users: [{user, files: [{name, text}]}]}: ~<user>/.cassandra (0700, owned by the user) and its files
+    (0600, owned by the user, text the rendered one, its HOME the user's home), as the role writes them -> {changes:
+    [{path, before}]}: the directory or file to write, and what it is now (absent, other content, owner and mode)."""
+    changes = []
+    for entry in req["users"]:
+        try:
+            account = pwd.getpwnam(str(entry["user"]))
+        except KeyError:
+            changes.append({"path": "~%s/.cassandra" % entry["user"], "before": "no such user"})
+            continue
+        top = os.path.join(account.pw_dir, ".cassandra")
+        found = stat_result(top, True).get("stat", {})
+        if not found.get("isdir") or found.get("uid") != account.pw_uid or found.get("mode") != "0700":
+            changes.append({"path": top, "before": "absent" if not found.get("exists") else
+                            "%s %s" % (found.get("pw_name", found.get("uid")), found.get("mode"))})
+        for f in entry["files"]:
+            path = os.path.join(top, f["name"])
+            st = stat_result(path).get("stat", {})
+            wanted = f["text"].replace(HOME, account.pw_dir).encode("utf-8")
+            sha1 = read_b64_sha1(path)[1]
+            if not st.get("exists"):
+                changes.append({"path": path, "before": "absent"})
+            elif not st.get("isreg") or sha1 != hashlib.sha1(wanted).hexdigest():
+                changes.append({"path": path, "before": "other content"})
+            elif st.get("uid") != account.pw_uid or st.get("mode") != "0600":
+                changes.append({"path": path, "before": "%s %s" % (st.get("pw_name", st.get("uid")), st.get("mode"))})
+    return {"changes": changes}
+
+
+STEPS = {"node": step_node, "dirs": step_dirs, "compare": step_compare, "users": step_users}
 
 
 def main():

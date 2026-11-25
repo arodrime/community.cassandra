@@ -830,6 +830,7 @@
           {%- if 'removed' in kinds -%}{%- set _ = out.append('the exporter files removed: the running Cassandra keeps the ones it opened until its next restart') -%}{%- endif -%}
           {{ out + (_no_effect if _then == 'none' else [])
              + ([_header_added] if _header and _then == 'none' else [])
+             + ([_users_live] if _users and _then == 'none' else [])
              + ([_medusa_live] if _medusa and _then == 'none' else [])
              + ([_extras_live] if _extras and _then == 'none' else []) }}
       vars:
@@ -920,6 +921,9 @@
         # the JMX files written (missing, or other users or rights); the access file is read at start: written
         # back or changed, the rights the running Cassandra has are not known to be these (local JMX logs in no one)
         _jmx: "{{ _cassandra_config_jmx_changes | default([]) | map(attribute='file') | list }}"
+        # cqlsh's and nodetool's files of the users' ~/.cassandra (cassandra_config): read by those tools, no restart
+        _users: "{{ _cassandra_config_user_file_changes | default([]) | map(attribute='path') | list }}"
+        _users_live: "the users' ~/.cassandra files: read by cqlsh and nodetool, not by Cassandra"
         _rights: >-
           {{ _jmx | select('equalto', 'jmxremote.access') | list if not cassandra_local_jmx | default(false) | bool else [] }}
         _os: "{{ _cassandra_linux_items | default([]) }}"
@@ -1026,7 +1030,7 @@
         # a time sync unit that cannot run here (its condition): left out, said
         _no_unit: "{{ _os | selectattr('timesync', 'defined') | list if _clock.condition | default('') == 'no' else [] }}"
         _todo: >-
-          {{ _files | length > 0 or (_perms + _dirs + _jmx + _exporter + _header + _medusa + _extras) | length > 0 or _pending | bool
+          {{ _files | length > 0 or (_perms + _dirs + _jmx + _users + _exporter + _header + _medusa + _extras) | length > 0 or _pending | bool
              or _java | bool or _release | bool or _unit_changes | length > 0
              or _timesync | bool
              or _stopped | bool or _disks_window | length > 0 }}
@@ -1087,7 +1091,7 @@
           {%- set write = (['apply the repository, look for Cassandra ' ~ cassandra_apply_config_version.wanted ~ ' in it']
                            if repo_first else [])
                           + (['install Java ' ~ cassandra_java_version] if _java | bool else [])
-                          + (['write the config'] if (_files + _perms + _dirs + _jmx + _exporter + _header) | length > 0 else [])
+                          + (['write the config'] if (_files + _perms + _dirs + _jmx + _users + _exporter + _header) | length > 0 else [])
                           + (['set up Medusa'] if _medusa else [])
                           + (['apply the packages, firewall'] if repo_first and _extras | rejectattr('section', 'equalto', 'Repository') | list
                              else [] if repo_first else ['apply the repository, packages, firewall'] if _extras else []) -%}
@@ -1103,7 +1107,7 @@
         # (not staged) other changes than the config files' content, or a JVM started by hand
         _stage_other_changes: >-
           {{ _java | bool or _release | bool or _hand_started | bool
-             or (_perms + _dirs + _jmx + _exporter + _header + _medusa + _extras) | length > 0 }}
+             or (_perms + _dirs + _jmx + _users + _exporter + _header + _medusa + _extras) | length > 0 }}
         # (not staged) what the role does at the node's turn besides its files: the exporter's and the AxonOps
         # agent's steps, the switch of the conf directory
         _stage_role_steps: >-

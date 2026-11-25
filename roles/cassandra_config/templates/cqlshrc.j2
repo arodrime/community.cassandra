@@ -1,0 +1,11 @@
+[authentication]
+username = {{ item.username }}
+{% if cassandra_version == '40x' %}
+password = {{ item.password }}
+{% else %}
+credentials = {{ _home }}/.cassandra/credentials
+{% endif %}
+
+[connection]
+hostname = {{ cassandra_rpc_address if cassandra_rpc_address not in ['', 'localhost', '0.0.0.0'] else '127.0.0.1' }}
+port = {{ cassandra_native_transport_port }}

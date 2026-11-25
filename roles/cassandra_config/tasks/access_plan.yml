@@ -115,3 +115,46 @@
           {%-   endif -%}
           {%- endfor -%}
           {{ out }}
+
+# The files of OS users' ~/.cassandra the role writes (access.yml): cqlsh's (cassandra_cqlsh_credentials) and nodetool's
+# JMX TLS settings (cassandra_jmx_ssl_enabled: root's and the account Cassandra runs as), rendered here from the same
+# templates (the user's home put in on the node), compared on the node: the ones to write, and why (no content said)
+- name: Compare the cqlsh and nodetool files of the users
+  when: cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
+  block:
+    - name: Compare the users' ~/.cassandra files with the role's
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_config_python }}"
+          - -c
+          - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_read.py') }}"
+        stdin: >-
+          {{ {'step': 'users', 'users': _files | community.cassandra.cassandra_config_user_request(_texts)} | to_json }}
+      register: cassandra_config_users_read
+      changed_when: false
+      check_mode: false  # reads only
+      no_log: true  # the files rendered hold passwords
+      vars:
+        _files: >-
+          {{ cassandra_cqlsh_credentials | community.cassandra.cassandra_config_user_files(cassandra_version,
+               ['root', _cassandra_config_perm_settings.user | string] | unique if cassandra_jmx_ssl_enabled | bool else []) }}
+        # (rendered as access.yml renders them, the user's home put in on the node: cassandra_config_read.py's HOME)
+        _texts: >-
+          {%- set out = [] -%}
+          {%- for f in _files -%}
+          {%-   set v = {'item': f.item, '_home': '@@CASSANDRA_HOME@@'} -%}
+          {%-   set _ = out.append(lookup('ansible.builtin.template', f.template, template_vars=v)) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Stop when the users' files could not be compared
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }}: the users' ~/.cassandra files could not be compared: {{ _read.error }}"
+      vars:
+        _read: "{{ cassandra_config_users_read.stdout | from_json }}"
+      when: _read.error is defined
+
+    # (said as the JMX files are: written whole, never their content)
+    - name: List the users' files to write
+      ansible.builtin.set_fact:
+        _cassandra_config_user_file_changes: "{{ (cassandra_config_users_read.stdout | from_json).changes }}"

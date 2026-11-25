@@ -303,6 +303,7 @@ cassandra_config_template_snippets	both
 cassandra_config_unknown_files	both
 cassandra_config_unmounted	both
 cassandra_config_user	both
+cassandra_config_users_read	both
 cassandra_confirm_answer	both
 cassandra_confirm_prompt	both
 cassandra_counter_cache_save_period	both

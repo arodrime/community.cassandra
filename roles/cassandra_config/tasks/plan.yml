@@ -89,10 +89,11 @@
     - name: List what to change
       ansible.builtin.import_tasks: changes.yml
 
-    # (included only with JMX users: a task skipped costs each node a build of its variables)
-    - name: The JMX users' files
+    # (included only with JMX users, cqlsh credentials or JMX TLS: a task skipped costs each node a build of its
+    # variables)
+    - name: The users' files
       ansible.builtin.include_tasks: access_plan.yml
-      when: cassandra_jmx_users | length > 0
+      when: cassandra_jmx_users | length > 0 or cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
 
     # Skipped in check mode (--check, or check_mode applied to the role, as apply_config's preview does): this run
     # only looks, else it writes the files
@@ -130,6 +131,8 @@
         {{ cassandra_jmx_users | length > 0
            and (cassandra_config_jmx_same.stdout is not defined or _cassandra_config_jmx_changes | default([]) | length > 0
                 or cassandra_config_jmx_header.stdout | default('[]') | from_json | length > 0) }}
+      # (cqlsh's and nodetool's files of the users' ~/.cassandra)
+      users' files: "{{ _cassandra_config_user_file_changes | default([]) | length > 0 }}"
       exporter: >-
         {{ cassandra_prometheus_exporter_enabled | bool or cassandra_config_exporter_unused.stdout_lines is not defined
            or cassandra_config_exporter_unused.stdout_lines | length > 0 }}

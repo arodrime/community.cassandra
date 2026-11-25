@@ -6,6 +6,8 @@ cassandra_apply_only: -e apply_only -> the parts the run compares and applies, t
 refuses them.
 cassandra_apply_only_stops: what a run restricted to some parts cannot leave out on its nodes (a newer release of
 the series, the AxonOps agent cassandra-env.sh loads).
+cassandra_config_user_files, cassandra_config_user_request: the files of the users' ~/.cassandra cassandra_config
+writes, and its plan's request to compare them on the node.
 cassandra_check_groups: the nodes whose cassandra_config checks read the same values, checked once.
 cassandra_apply_gate_lines: the lines the report of the run says of the compare: the nodes whose config the
 cassandra_config plan found unchanged (the rest of the role not run there), the parts left out.
@@ -108,6 +110,33 @@ def cassandra_check_groups(names, hostvars):
     return groups
 
 
+def cassandra_config_user_files(credentials, series, nodetool_users):
+    """cassandra_cqlsh_credentials, cassandra_version, the users whose nodetool gets the JMX TLS settings -> the files
+    cassandra_config writes in their ~/.cassandra: [{user, name, template, item}] (item: the credential, for its
+    template), as access.yml writes them."""
+    out = []
+    for cred in credentials or []:
+        out.append({"user": cred["os_user"], "name": "cqlshrc", "template": "cqlshrc.j2", "item": cred})
+        if series != "40x":
+            out.append({"user": cred["os_user"], "name": "credentials", "template": "cqlsh_credentials.j2", "item": cred})
+    for user in nodetool_users or []:
+        out.append({"user": user, "name": "nodetool-ssl.properties", "template": "nodetool-ssl.properties.j2", "item": {}})
+    return out
+
+
+def cassandra_config_user_request(files, texts):
+    """The files (cassandra_config_user_files) and their texts, rendered in that order -> the users step's request of
+    cassandra_config_read.py: [{user, files: [{name, text}]}], a user once, in the order of files."""
+    users = {}
+    order = []
+    for f, text in zip(files, texts):
+        if f["user"] not in users:
+            users[f["user"]] = []
+            order.append(f["user"])
+        users[f["user"]].append({"name": f["name"], "text": text})
+    return [{"user": u, "files": users[u]} for u in order]
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -115,4 +144,6 @@ class FilterModule(object):
             "cassandra_apply_only_stops": cassandra_apply_only_stops,
             "cassandra_apply_gate_lines": cassandra_apply_gate_lines,
             "cassandra_check_groups": cassandra_check_groups,
+            "cassandra_config_user_files": cassandra_config_user_files,
+            "cassandra_config_user_request": cassandra_config_user_request,
         }

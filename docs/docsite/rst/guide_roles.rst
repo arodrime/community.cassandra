@@ -1158,7 +1158,9 @@ compares and lists, nothing written) and the rest (``tasks/apply_plan.yml``: wha
 the plan lists). ``apply_config`` runs the plan on every node, and the rest only where the plan lists something to
 write: elsewhere the rest would say nothing and leave the plan's facts as they are, so it is not run (the screens are
 the same; the report says it in its ``COMPARE`` section: how many nodes the plan found unchanged, how many the role
-compared). The Prometheus exporter on is always compared by the rest. ``-e apply_full=true`` runs the rest on every
+compared). The Prometheus exporter on is always compared by the rest. The users' ``~/.cassandra`` files the role writes (cqlsh's
+files of ``cassandra_cqlsh_credentials``, nodetool's ``nodetool-ssl.properties``) are compared by the plan: one to
+write is shown and written at the node's turn, with no restart (read by cqlsh and nodetool, not by Cassandra). ``-e apply_full=true`` runs the rest on every
 node, as before; it is a fallback while the roles are split into a plan and the rest, meant to go once they all are
 and proven. ``-e apply_verify=true`` (tests, support) runs the rest on every node too, then stops on a node the plan
 found unchanged whose facts the rest changed, naming them.

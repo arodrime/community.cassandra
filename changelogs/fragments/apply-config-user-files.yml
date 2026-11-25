@@ -1,0 +1,3 @@
+---
+bugfixes:
+- "apply_config playbook - the cqlsh files of ``cassandra_cqlsh_credentials`` and nodetool's ``~/.cassandra/nodetool-ssl.properties`` (``cassandra_jmx_ssl_enabled``) are compared too: a file missing, other or with another owner or mode is shown and written at the node's turn, with no restart (they were ignored, the node left as it was)."

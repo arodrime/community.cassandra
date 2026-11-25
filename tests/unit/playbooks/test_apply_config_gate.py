@@ -16,7 +16,8 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_gate import (
-    PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops, cassandra_check_groups)
+    PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops, cassandra_check_groups,
+    cassandra_config_user_files, cassandra_config_user_request)
 from ansible_collections.community.cassandra.tests.unit.helpers import TOP, render
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 
@@ -36,7 +37,6 @@ WRITERS = ("ansible.builtin.template", "ansible.builtin.copy", "ansible.builtin.
 NEVER = {
     "check mode": "skipped in check mode (a command, a write the module does not do), or when not ansible_check_mode",
     "read": "a read: changed_when false",
-    "no fact": "acted on by no fact of the run: apply_config does not plan it (the cqlsh and nodetool files)",
 }
 # every task of the rest that may write: the item of the plan's list that covers it, or why it never writes in
 # the compare
@@ -63,11 +63,11 @@ WRITES = {
     "Write jmxremote.password": "JMX files",
     "Write jmxremote.access": "JMX files",
     "Set the owner and mode of the JMX files left as they are": "JMX files",
-    "Create ~/.cassandra": "no fact",
-    "Write ~/.cassandra/cqlshrc": "no fact",
-    "Write ~/.cassandra/credentials (4.1+)": "no fact",
-    "Create their ~/.cassandra": "no fact",
-    "Write their ~/.cassandra/nodetool-ssl.properties": "no fact",
+    "Create ~/.cassandra": "users' files",
+    "Write ~/.cassandra/cqlshrc": "users' files",
+    "Write ~/.cassandra/credentials (4.1+)": "users' files",
+    "Create their ~/.cassandra": "users' files",
+    "Write their ~/.cassandra/nodetool-ssl.properties": "users' files",
     "Report": "check mode",  # (cassandra_change_report: its file only with cassandra_change_report_dir, "" here)
 }
 # every message, question and stop of the rest: the item it needs, or why the compare never says it
@@ -434,3 +434,70 @@ def test_the_checks_run_once_for_the_nodes_that_share_their_values():
     assert render(names, inventory_hostname="n1", _cassandra_config_checked=["n1", "n3"]) == "n1, n3"
     with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
         assert "inventory_hostname" not in f.read()
+
+
+# --- the users' ~/.cassandra files (cqlsh, nodetool): in the plan, a difference schedules the node -----------------
+
+def test_the_users_files_are_compared_as_written(tmp_path, monkeypatch):
+    import collections
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as reader
+    entry = collections.namedtuple("pw", "pw_name pw_dir pw_uid")
+    uid = os.getuid()
+    accounts = {"ops": entry("ops", str(tmp_path / "ops"), uid)}
+
+    def getpwnam(name):
+        return accounts[name]  # (KeyError: no such user, as pwd says it)
+    monkeypatch.setattr(reader.pwd, "getpwnam", getpwnam)
+    text = "credentials = " + reader.HOME + "/.cassandra/credentials\n"
+    req = {"users": [{"user": "ops", "files": [{"name": "cqlshrc", "text": text}]}, {"user": "gone", "files": []}]}
+    top = tmp_path / "ops" / ".cassandra"
+    assert reader.step_users(req)["changes"] == [{"path": str(top), "before": "absent"},
+                                                 {"path": str(top / "cqlshrc"), "before": "absent"},
+                                                 {"path": "~gone/.cassandra", "before": "no such user"}]
+    top.mkdir(parents=True)
+    top.chmod(0o700)
+    (top / "cqlshrc").write_text("credentials = %s/.cassandra/credentials\n" % (tmp_path / "ops"))
+    (top / "cqlshrc").chmod(0o600)
+    req["users"].pop()
+    assert reader.step_users(req)["changes"] == []  # (its home put in: the same text)
+    (top / "cqlshrc").chmod(0o644)
+    assert reader.step_users(req)["changes"][0]["before"].endswith(" 0644")
+    (top / "cqlshrc").write_text("other\n")
+    (top / "cqlshrc").chmod(0o600)
+    assert reader.step_users(req)["changes"] == [{"path": str(top / "cqlshrc"), "before": "other content"}]
+
+
+def test_the_plan_and_the_rest_render_the_same_users_files():
+    files = cassandra_config_user_files([{"os_user": "ops", "username": "u", "password": "p"}], "41x", ["root", "cassandra"])
+    assert [(f["user"], f["name"], f["template"]) for f in files] == [
+        ("ops", "cqlshrc", "cqlshrc.j2"), ("ops", "credentials", "cqlsh_credentials.j2"),
+        ("root", "nodetool-ssl.properties", "nodetool-ssl.properties.j2"),
+        ("cassandra", "nodetool-ssl.properties", "nodetool-ssl.properties.j2")]
+    assert [f["name"] for f in cassandra_config_user_files([{"os_user": "ops"}], "40x", [])] == ["cqlshrc"]
+    assert cassandra_config_user_request(files, ["a", "b", "c", "d"]) == [
+        {"user": "ops", "files": [{"name": "cqlshrc", "text": "a"}, {"name": "credentials", "text": "b"}]},
+        {"user": "root", "files": [{"name": "nodetool-ssl.properties", "text": "c"}]},
+        {"user": "cassandra", "files": [{"name": "nodetool-ssl.properties", "text": "d"}]}]
+    # the rest writes the same templates, at the paths the plan compares, with its mode
+    access = load_tasks(os.path.join(TASKS, "access.yml"))
+    for name, template in (("Write ~/.cassandra/cqlshrc", "cqlshrc.j2"),
+                           ("Write ~/.cassandra/credentials (4.1+)", "cqlsh_credentials.j2"),
+                           ("Write their ~/.cassandra/nodetool-ssl.properties", "nodetool-ssl.properties.j2")):
+        copy = find_task(access, name)["ansible.builtin.copy"]
+        assert copy["content"] == "{{ lookup('ansible.builtin.template', '%s') }}" % template
+        assert copy["mode"] == "0600" and copy["owner"] == "{{ item.os_user }}"
+    # the plan's home token is the read script's
+    plan = find_task(load_tasks(os.path.join(TASKS, "access_plan.yml")), "Compare the users' ~/.cassandra files with the role's")
+    from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_config_read as reader
+    assert "'_home': '%s'" % reader.HOME in plan["vars"]["_texts"]
+
+
+def test_a_users_file_to_write_schedules_the_node():
+    play = find_play(PLAYBOOK, "Find what each node needs")
+    note = find_task(play, "Note what this node needs")
+    users = note["vars"]["_users"]
+    assert render(users, _cassandra_config_user_file_changes=[{"path": "/root/.cassandra/cqlshrc"}]) == [
+        "/root/.cassandra/cqlshrc"]
+    for name in ("_todo", "_steps", "_stage_other_changes"):
+        assert "_jmx + _users + _exporter" in note["vars"][name], name
+    assert verdict(_cassandra_config_user_file_changes=[{"path": "x"}]) == ["users' files"]
