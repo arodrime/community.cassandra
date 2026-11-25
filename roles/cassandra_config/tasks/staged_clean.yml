@@ -1,0 +1,9 @@
+---
+# apply_config's end (and a node not staged again): the files stage.yml staged and no turn put in place (a run
+# stopped before it), removed; only those names, in the conf directory only
+- name: Remove the staged config files left
+  ansible.builtin.command:
+    argv: [find, -H, "{{ cassandra_conf_dir }}", -maxdepth, "1", -type, f, -name, ".*.ansible-next", -print, -delete]
+  register: cassandra_config_staged_left
+  changed_when: cassandra_config_staged_left.stdout | length > 0
+  failed_when: false  # (no conf directory: nothing staged)

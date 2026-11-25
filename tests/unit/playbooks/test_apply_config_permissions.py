@@ -181,7 +181,7 @@ def test_the_action_restarts_starts_or_only_writes():
                      "Install the Java this node moves to", "Install the Java this node moves to, its Cassandra release kept",
                      "Update the Cassandra package of a node not running", "Set up the AxonOps agent",
                      "Note that the config is being written",
-                     "Write the config", "Note that the config is written", "Set up Medusa",
+                     "Write the config", "Put the staged config in place", "Note that the config is written", "Set up Medusa",
                      "Apply the repository, the packages and the firewall",
                      "Apply the packages, its Cassandra release kept", "Check the files written back",
                      "Record the files written with no effect as the ones the running Cassandra runs with",
@@ -208,6 +208,8 @@ def test_the_action_restarts_starts_or_only_writes():
                                                    "Apply the repository of the release, then look for the release in it",
                                                    # (the stage of the stop's row: test_cassandra_summary.py)
                                                    "Note that the config is being written", "Note that the config is written",
+                                                   # (a restart for the config alone: test_apply_config_speed.py)
+                                                   "Put the staged config in place",
                                                    "Report what the repository, the packages and the firewall would get",
                                                    "Check it runs the new Java", "Check it runs the new release")]
     tasks.pop()  # the mark of a stop in its restart window (os_window.yml), removed once up again
@@ -220,8 +222,15 @@ def test_the_action_restarts_starts_or_only_writes():
     assert write["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_config"
     assert report["ansible.builtin.include_role"]["name"] == "community.cassandra.cassandra_change_report"
     assert report["vars"]["cassandra_change_report_items"] == "{{ _cassandra_config_items | default([]) }}"
+
+    def runs(task, values):
+        when = task["when"] if isinstance(task["when"], list) else [task["when"]]
+        return all(render("{{ %s }}" % w, values) in (True, "True") for w in when)
+
     for check in (True, False):
-        assert [render("{{ %s }}" % t["when"], {"ansible_check_mode": check}) for t in (write, report)] == [not check, check]
+        assert [runs(t, {"ansible_check_mode": check}) for t in (write, report)] == [not check, check]
+    # a restart for the config alone: its files staged before, put in place at its turn (no role run then)
+    assert runs(write, {"ansible_check_mode": False, "cassandra_apply_config_stage": True}) is False
     for then, expected in (("restart", [False, True, False]), ("start", [True, False, True]), ("none", [False, False, False]),
                            ("write", [False, False, False])):
         assert [render("{{ %s }}" % t["when"], {"cassandra_apply_config_then": then}) for t in (clear, restart, start)] == expected

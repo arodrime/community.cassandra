@@ -1,0 +1,3 @@
+---
+minor_changes:
+- "apply_config playbook - a node restarted for its config files alone gets them staged next to the live ones (``.<file>.ansible-next``, same owner and mode) on every such node at once, before the restarts; at its turn they are put in place by a rename just before its restart, with no compare again. A run stopped before a node's turn leaves its staged files, which Cassandra does not read; the end of the next real run removes them."

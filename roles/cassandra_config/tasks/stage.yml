@@ -1,0 +1,34 @@
+---
+# apply_config, on the nodes it restarts, all at once before the restarts: the config files to write, as
+# compare.yml rendered them, staged next to the live ones (.<file>.ansible-next: hidden, so neither Cassandra
+# nor the record of its start reads them; same directory, owner, group and mode, so that staged.yml puts them
+# in place by a rename, just before the node's restart). Nothing live changes here: a run stopped later leaves
+# the staged files alone, which the next run stages again, and its end removes (staged_clean.yml).
+- name: Stage the config files next to the live ones
+  ansible.builtin.copy:
+    content: "{{ _cassandra_config_new[cassandra_config_file] }}"
+    dest: "{{ cassandra_conf_dir }}/.{{ cassandra_config_file }}.ansible-next"
+    owner: "{{ _cassandra_config_perm.owner }}"
+    group: "{{ _cassandra_config_perm.group }}"
+    mode: "{{ _cassandra_config_perm.mode }}"
+  diff: false  # shown before, with secrets masked
+  no_log: true  # passwords
+  loop: "{{ _cassandra_config_staged_files }}"
+  loop_control:
+    loop_var: cassandra_config_file
+  vars:
+    _cassandra_config_perm_file: "{{ cassandra_config_file }}"
+
+# what staged.yml checks before it renames them: each one as staged
+- name: Note the files staged
+  ansible.builtin.set_fact:
+    cassandra_config_staged: >-
+      {{ dict(_cassandra_config_staged_files
+              | zip(_cassandra_config_staged_files | map('extract', _cassandra_config_new) | map('hash', 'sha1'))) }}
+
+# the JMX users' files and the cqlsh credentials, as the role writes them (access.yml): the JMX files only when
+# they do not change (the plan restarts a node whose JMX files change through the role, at its turn), the
+# client files read by cqlsh and nodetool, not by Cassandra
+- name: JMX users and cqlsh credentials
+  ansible.builtin.include_tasks: access.yml
+  when: cassandra_jmx_users | length > 0 or cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool

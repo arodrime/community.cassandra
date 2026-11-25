@@ -5,7 +5,9 @@
 #
 # The settings that differ are shown first, then one question. Only the nodes
 # that need it are touched, and only the ones whose change needs it are
-# restarted, one at a time, the cluster checked before and after each.
+# restarted, one at a time, the cluster checked before and after each (files
+# staged first on all nodes at once, .<file>.ansible-next, put in place just
+# before each restart).
 #
 # --check shows the differences, changing nothing. The run stops at the first
 # problem; -e cassandra_rolling_resume=true resumes it.
@@ -655,6 +657,15 @@
                          and not _unit_changes | default([]) else [])
              + (cassandra_apply_config_version.notes | default([]) | map('regex_replace', '^', 'Cassandra ') | list
                 if _release | default(false) | bool else []) }}
+        # A node restarted for its config files alone (no Java, release, package, Medusa, owner or mode, JMX or
+        # exporter file, header line, conf directory switch, link, missing directory; no Prometheus exporter nor
+        # AxonOps agent, whose files and checks the role writes and runs at the node's turn): its files staged next
+        # to the live ones on every such node at once (cassandra_config stage.yml), then put in place at its turn,
+        # just before its restart (staged.yml): its turn does no compare again. The others: the role at their turn
+        cassandra_apply_config_stage: >-
+          {{ _todo | bool and _then == 'restart' and not _stage_other_changes | bool and not _stage_role_steps | bool
+             and not _stage_paths | bool }}
+        cassandra_apply_config_stage_files: "{{ _stage_files }}"
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
         cassandra_apply_config_kept_running: >-
           {%- set out = [_perms_why] if _perms + _dirs else [] -%}
@@ -676,6 +687,8 @@
               ~ ' group): a real run refuses its restart (it would start a second Cassandra). ' ~ _outside_way_out]
              if _hand_started | default(false) | bool else [] }}
         _files: "{{ _cassandra_config_changes | default([]) }}"
+        # the files the role's template task writes (cassandra_config apply.yml): the ones it does not leave as they are
+        _stage_files: "{{ _cassandra_config_write | default([]) | reject('in', _cassandra_config_kept | default([])) | list }}"
         # the files left as they are that get the role's header line, nothing else: a comment, no restart for it
         # (cassandra_config_header: the file with it has the same settings; recorded as the running Cassandra's)
         _header: "{{ _cassandra_config_header | default([]) | map(attribute='file') | list }}"
@@ -935,6 +948,19 @@
           {%- else -%}
           {{ [] }}
           {%- endif -%}
+        # (not staged) other changes than the config files' content, or a JVM started by hand
+        _stage_other_changes: >-
+          {{ _java | bool or _release | bool or _hand_started | bool
+             or (_perms + _dirs + _jmx + _exporter + _header + _medusa + _extras) | length > 0 }}
+        # (not staged) what the role does at the node's turn besides its files: the exporter's and the AxonOps
+        # agent's steps, the switch of the conf directory
+        _stage_role_steps: >-
+          {{ cassandra_prometheus_exporter_enabled | default(false) | bool or cassandra_axonops_enabled | default(false) | bool
+             or _cassandra_apply_config_conf_switch | default(false) | bool }}
+        # (not staged) a file to write that is a link, a directory missing
+        _stage_paths: >-
+          {{ _stage_files | select('in', _cassandra_config_links | default([])) | list | length > 0
+             or (cassandra_config_dirs | default({})).results | default([]) | rejectattr('stat.exists') | list | length > 0 }}
 
     # What the run's later steps read of every node, read once here (on ansible-core 2.16 each read of a node's
     # variables builds all of them, its facts included: read for every node from every node, the cost grew with
@@ -1348,6 +1374,12 @@
       changed_when: false
       when: not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no node to do
 
+    - name: Group the nodes whose config is staged
+      ansible.builtin.group_by:
+        key: "cassandra_apply_config_stage_{{ cassandra_apply_config_stage | bool and not ansible_check_mode }}"
+      changed_when: false
+      when: not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no node to do
+
     - name: Nothing to do on this node
       ansible.builtin.set_fact:
         cassandra_op_result: "{{ 'not done (the run stopped before it)' if cassandra_apply_config_os_live | length > 0 else 'nothing to apply' }}"
@@ -1689,6 +1721,42 @@
         cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok_all.batch[inventory_hostname] }}"
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
+# The nodes restarted for their config files alone: those files rendered and staged next to the live ones, on
+# these nodes at once (nothing live changes: the running Cassandra reads none of them), then put in place at the
+# node's turn, just before its restart, which then does no compare again (cassandra_config stage.yml, staged.yml)
+- name: Stage the config of the nodes to restart, on these nodes at once
+  hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_stage_True'] | default([])) | list }}"
+  any_errors_fatal: true
+  gather_facts: false  # gathered by the preflight
+  become: true
+  tasks:
+    # first: each node its own facts before any run_once task (ansible/ansible#87148)
+    - name: Give each node its own facts
+      ansible.builtin.set_fact:
+        _cassandra_own_facts: "{{ inventory_hostname }}"
+        cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
+      tags: [always]  # under --tags too
+
+    - name: Stage the config files
+      when: inventory_hostname not in cassandra_progress_done | default([])  # (done by the interrupted run)
+      block:
+        - name: Stage the config files
+          ansible.builtin.include_role:
+            name: community.cassandra.cassandra_config
+            tasks_from: stage.yml
+          vars:
+            _cassandra_config_staged_files: "{{ cassandra_apply_config_stage_files }}"
+      rescue:
+        # (a node stopped because another one failed: ansible-core 2.17+ rescues it too)
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: >-
+              Stopped at {{ inventory_hostname }} ({{ ansible_failed_task.name | default('another node failed') }}):
+              nothing put in place, no restart yet; the staged .ansible-next files are not read by Cassandra.
+              WAY OUT  fix it, then run apply_config again.
+          vars:
+            cassandra_output: true  # a verdict: its msg as is
+
 # The others one at a time: cluster checked, config written, node drained and
 # restarted, cluster checked again (--check: every node at once, in the play
 # above, nothing is restarted). The health checks let the nodes not running
@@ -1792,6 +1860,13 @@
         _cassandra_own_facts: "{{ inventory_hostname }}"
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
+
+    # the files staged for a restart and not put in place (a node not reached by an earlier run, stopped): removed
+    - name: Remove the staged config files left
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_config
+        tasks_from: staged_clean.yml
+      when: not ansible_check_mode
 
     - name: Print the changes
       ansible.builtin.debug:

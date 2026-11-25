@@ -1,0 +1,50 @@
+---
+# apply_config, at the node's turn, just before its restart: the files stage.yml staged put in place, each by a
+# rename in its directory (atomic), once every one of them is checked to be as staged (else none is moved, the
+# node left as it was); with cassandra_config_backup, the live file kept first as the template module keeps it
+# (<file>.<pid>.<date>@<time>~). The record of the files the running Cassandra started with first
+# (config_seed.yml), as the role does before any change, so that a change not restarted yet is told pending.
+- name: Record the config the running Cassandra started with
+  ansible.builtin.include_tasks: config_seed.yml
+
+- name: Put the staged config files in place
+  ansible.builtin.command:
+    argv:
+      - "{{ _cassandra_config_python }}"
+      - -c
+      - "{{ _move }}"
+      - "{{ cassandra_conf_dir }}"
+      - "{{ cassandra_config_staged | to_json }}"
+      - "{{ cassandra_config_backup | bool | string }}"
+  register: cassandra_config_staged_moved
+  changed_when: true
+  vars:
+    _move: |
+      import hashlib, json, os, shutil, sys, time
+      conf, staged, backup = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3] == "True"
+      def sha1(path):
+          with open(path, "rb") as f:
+              return hashlib.sha1(f.read()).hexdigest()
+      wrong = []
+      for name, digest in sorted(staged.items()):
+          path = os.path.join(conf, "." + name + ".ansible-next")
+          try:
+              if sha1(path) != digest:
+                  wrong.append(name + " (another content)")
+          except (IOError, OSError):
+              wrong.append(name + " (missing)")
+      if wrong:
+          sys.exit("staged file not as staged, nothing moved: " + ", ".join(wrong))
+      for name in sorted(staged):
+          live = os.path.join(conf, name)
+          if backup and os.path.isfile(live):
+              shutil.copy2(live, "%s.%s.%s" % (live, os.getpid(), time.strftime("%Y-%m-%d@%H:%M:%S~", time.localtime())))
+          os.rename(os.path.join(conf, "." + name + ".ansible-next"), os.path.join(conf, name))
+      print(json.dumps(sorted(staged)))
+
+- name: Report
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_change_report
+  vars:
+    cassandra_change_report_role: cassandra_config
+    cassandra_change_report_items: "{{ _cassandra_config_items | default([]) }}"
