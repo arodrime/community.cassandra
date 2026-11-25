@@ -633,6 +633,7 @@ def template_names(value, expression=False):
     if not isinstance(value, str) or not ("{{" in value or "{%" in value or expression):
         return set()
     text = value if ("{{" in value or "{%" in value) else "{{ %s }}" % value
+
     class Any(dict):  # (every filter and test known: Ansible's and the collection's, not parsed here)
         def __contains__(self, name):
             return True

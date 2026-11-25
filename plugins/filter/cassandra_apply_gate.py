@@ -101,7 +101,9 @@ def cassandra_apply_resume_refusal(resumed, recorded, current, resume_command, o
                 "WAY OUT  or start over without resuming:", "  " + over_command]
     if recorded == (current or "all"):
         return []
-    said = lambda parts: "every part" if parts == "all" else "apply_only=" + parts  # noqa: E731
+
+    def said(parts):
+        return "every part" if parts == "all" else "apply_only=" + parts
     return ["the interrupted run applied " + said(recorded), "this one: " + said(current or "all"),
             "a resumed run applies the parts the interrupted one did", "WAY OUT  resume with them:",
             "  " + resume_command]
