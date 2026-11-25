@@ -34,6 +34,14 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
+    # the cluster's nodes read once for the run (query cassandra_nodes reads every node's variables at each call,
+    # many calls per node and per task otherwise); read again if the group's hosts change
+    - name: Note the cluster's nodes for the run
+      ansible.builtin.set_fact:
+        _cassandra_nodes_memo: "{{ lookup('community.cassandra.cassandra_nodes', memo=true) }}"
+      run_once: true
+      tags: [always]  # under --tags too
+
     - name: Say what the run does
       ansible.builtin.debug:
         msg: "{{ 'compare_config' | community.cassandra.cassandra_phase(count=ansible_play_hosts_all | length) }}"
@@ -920,6 +928,52 @@
           {{ [] }}
           {%- endif -%}
 
+    # What the run's later steps read of every node, read once here (on ansible-core 2.16 each read of a node's
+    # variables builds all of them, its facts included: read for every node from every node, the cost grew with
+    # the square of the nodes): its plan, its address and rack, under the variable names the filters read. Names,
+    # addresses and words of the plan only (a fact is templated again at each read on 2.16)
+    - name: Note what the run needs of every node
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_view: >-
+          {%- set out = {} -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   set v = hostvars[h] -%}
+          {%-   set p = v._cassandra_preflight | default({}) -%}
+          {%-   set _ = out.update({h: {
+                  'cassandra_apply_config_then': v.cassandra_apply_config_then | default(''),
+                  'cassandra_apply_config_todo': v.cassandra_apply_config_todo | default(false) | bool,
+                  'cassandra_apply_config_marked': v.cassandra_apply_config_marked | default(false) | bool,
+                  'cassandra_apply_config_unit_failed': v.cassandra_apply_config_unit_failed | default(false) | bool,
+                  'disks_window': v.cassandra_apply_config_disks_window | default([]) | length > 0,
+                  'jmx_password': 'jmxremote.password' in v._cassandra_config_jmx_changes | default([]) | map(attribute='file'),
+                  'disk_warned': v.cassandra_apply_config_notes | default([]) | select('match', 'WARNING  data disks: ')
+                                 | map('regex_replace', '^WARNING  data disks: ', '') | list,
+                  '_cassandra_preflight': {'ring_address': p.ring_address | default(''),
+                                           'cassandra_dc': p.cassandra_dc | default(v.cassandra_dc | default('')),
+                                           'cassandra_rack': p.cassandra_rack | default(v.cassandra_rack | default(''))}}}) -%}
+          {%- endfor -%}
+          {{ out }}
+        # the inventory names of the ring's addresses, for the health checks (cluster_health_read.yml)
+        _cassandra_run_addresses: >-
+          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars) }}
+      run_once: true
+
+    # the other nodes each one lets be down in its health checks (the plays that write the config below)
+    - name: Note the other nodes each node may find down
+      ansible.builtin.set_fact:
+        _cassandra_apply_config_down_ok_all: >-
+          {%- set view = _cassandra_apply_config_view -%}
+          {%- set nodes = query('community.cassandra.cassandra_nodes') | select('in', view) | list -%}
+          {%- set out = {'batch': {}, 'serial': {}} -%}
+          {%- for h in nodes -%}
+          {%-   for mode in ['batch', 'serial'] -%}
+          {%-     set _ = out[mode].update({h: nodes | community.cassandra.cassandra_apply_config_down_ok(
+                    view, h, view[h].cassandra_apply_config_then, ansible_check_mode, batch=mode == 'batch')}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
     # A Cassandra outside its unit's control group (a JVM started by hand or by a script of its own): the restart
     # through the unit would start a second one next to it. A real run refuses before any change; --check goes on to
     # show everything (the node's WARNING says it)
@@ -968,8 +1022,8 @@
         # (a restart refuses the nodes down, whose way out would then be to start them with start_rack: on that package
         # too, a node stopped with nothing to apply among them)
         _restarts: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
-             | selectattr('cassandra_apply_config_then', 'equalto', 'restart') | list | length > 0 }}
+          {{ _cassandra_apply_config_view.values() | selectattr('cassandra_apply_config_then', 'equalto', 'restart') | list
+             | length > 0 }}
 
     # 5.0: a node not running that this run starts (its unit failed, or an interrupted run stopped it): the mode it
     # last ran against the one it starts with (back, two steps on, into NONE unread), before the plan (the compare
@@ -983,8 +1037,9 @@
         _cassandra_storage_mode_read_done: true  # read by the compare
         _cassandra_storage_mode_starts: "{{ _starting }}"
         _starting: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
-             | selectattr('cassandra_apply_config_then', 'equalto', 'start') | map(attribute='inventory_hostname') | list }}
+          {{ ansible_play_hosts | select('in', _cassandra_apply_config_view)
+             | select('in', _cassandra_apply_config_view | dict2items | selectattr('value.cassandra_apply_config_then', 'equalto', 'start')
+                            | map(attribute='key') | list) | list }}
       when:
         - cassandra_version | default('') == '50x'
         - _starting | length > 0
@@ -1036,15 +1091,15 @@
                 + _start_rack.failed | map('regex_replace', '^', '    ') | list if _failed else [])
              + (['a restart for the tuned profile or the LVM read-ahead can be left for later:',
                  '    -e cassandra_linux_tuned_switch_restart=false -e cassandra_data_lvchange_restart=false']
-                if _restart | map('extract', hostvars) | map(attribute='cassandra_apply_config_disks_window', default=[])
-                   | select | list else [])
+                if _restart | map('extract', _view) | selectattr('disks_window') | list else [])
              + (['then run again.'] if _limit or _failed else []) }}
       run_once: true
       vars:
+        _view: "{{ _cassandra_apply_config_view }}"  # (every node's plan, read once)
         _restart: >-
           {%- set out = [] -%}
-          {%- for h in ansible_play_hosts -%}
-          {%-   set v = hostvars[h] -%}
+          {%- for h in ansible_play_hosts if h in _view -%}
+          {%-   set v = _view[h] -%}
           {%-   if v.cassandra_apply_config_todo | bool and v.cassandra_apply_config_then == 'restart' -%}
           {%-     set _ = out.append(h) -%}
           {%-   endif -%}
@@ -1054,8 +1109,8 @@
           {%- set out = [] -%}
           {%- if _restart -%}
           {%-   set first = ansible_play_hosts.index(_restart[0]) -%}
-          {%-   for h in ansible_play_hosts -%}
-          {%-     set v = hostvars[h] -%}
+          {%-   for h in ansible_play_hosts if h in _view -%}
+          {%-     set v = _view[h] -%}
           {%-     if v.cassandra_apply_config_then == 'write'
                      or (v.cassandra_apply_config_then == 'start'
                          and (not v.cassandra_apply_config_todo | bool or ansible_play_hosts.index(h) > first)) -%}
@@ -1068,7 +1123,7 @@
         # resume, still down here (after a restart in the inventory's order): the resume on them alone first
         _marked: >-
           {%- set out = [] -%}
-          {%- for h in _down if hostvars[h].cassandra_apply_config_marked | default(false) | bool -%}
+          {%- for h in _down if _view[h].cassandra_apply_config_marked -%}
           {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}
@@ -1081,7 +1136,7 @@
         # the nodes down whose unit failed with nothing to write: this run does not start them
         _failed: >-
           {%- set out = [] -%}
-          {%- for h in _down if hostvars[h].cassandra_apply_config_unit_failed | default(false) | bool and h not in _marked -%}
+          {%- for h in _down if _view[h].cassandra_apply_config_unit_failed and h not in _marked -%}
           {%-   set _ = out.append(h) -%}
           {%- endfor -%}
           {{ out }}
@@ -1095,9 +1150,8 @@
           {%- for kind, nodes in [['limit', _limit], ['failed', _failed]] -%}
           {%-   set racks = {} -%}
           {%-   for h in nodes -%}
-          {%-     set p = hostvars[h]._cassandra_preflight | default({}) -%}
-          {%-     set key = (p.cassandra_dc | default(hostvars[h].cassandra_dc | default('')),
-                             p.cassandra_rack | default(hostvars[h].cassandra_rack | default(''))) -%}
+          {%-     set p = _view[h]._cassandra_preflight -%}
+          {%-     set key = (p.cassandra_dc, p.cassandra_rack) -%}
           {%-     set _ = racks.update({key: racks.get(key, []) + [h]}) -%}
           {%-   endfor -%}
           {%-   set _ = out.update({kind: []}) -%}
@@ -1192,9 +1246,10 @@
       vars:
         # restarted or started by the run (a node left stopped is not moved)
         _moved: >-
-          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('cassandra_apply_config_then', 'defined')
-             | selectattr('cassandra_apply_config_then', 'in', ['restart', 'start'])
-             | map(attribute='inventory_hostname') | list }}
+          {{ ansible_play_hosts | select('in', _cassandra_apply_config_view)
+             | select('in', _cassandra_apply_config_view | dict2items
+                            | selectattr('value.cassandra_apply_config_then', 'in', ['restart', 'start']) | map(attribute='key') | list)
+             | list }}
         _nodes: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts -%}
@@ -1306,7 +1361,7 @@
         _then_nodes: >-
           {%- set out = {} -%}
           {%- for h in _todo -%}
-          {%-   set _ = out.setdefault(hostvars[h].cassandra_apply_config_then | default(''), []).append(h) -%}
+          {%-   set _ = out.setdefault(_cassandra_apply_config_view[h].cassandra_apply_config_then, []).append(h) -%}
           {%- endfor -%}
           {{ out }}
         # the most disruptive effect, on which nodes ("Apply changes and restart Cassandra on node1?"; the cluster
@@ -1488,10 +1543,8 @@
             # the warnings of the data disks the plan said: not again
             _cassandra_disk_warned: >-
               {%- set said = {} -%}
-              {%- for h in ansible_play_hosts -%}
-              {%-   set _ = said.update({h: hostvars[h].cassandra_apply_config_notes | default([])
-                                            | select('match', 'WARNING  data disks: ')
-                                            | map('regex_replace', '^WARNING  data disks: ', '') | list}) -%}
+              {%- for h in ansible_play_hosts if h in _cassandra_apply_config_view -%}
+              {%-   set _ = said.update({h: _cassandra_apply_config_view[h].disk_warned}) -%}
               {%- endfor -%}
               {{ said }}
             # in its restart window, or not at all (a unit that cannot run here)
@@ -1550,16 +1603,6 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    # once per node (the health checks read it many times, each time every node's variables)
-    - name: Note the other nodes that may stay down
-      ansible.builtin.set_fact:
-        # the other nodes where Cassandra is not running may stay down: those started later in the run, after
-        # these (or not to do: left down), those left stopped (for a restart under --check too: a real run refuses
-        # it, as the recap says)
-        _cassandra_apply_config_down_ok: >-
-          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
-               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode, batch=true) }}
-
     # cassandra_java_version (the series' Java when the inventory has none) and the others the Java move reads
     # (java_install.yml, shared with update_java): the defaults loaded in an earlier play are not kept
     - name: Load the cassandra_install defaults
@@ -1580,7 +1623,7 @@
         _no_login: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts_all if ansible_check_mode -%}  {#- (any such node is to do: in this play) -#}
-          {%-   if 'jmxremote.password' in hostvars[h]._cassandra_config_jmx_changes | default([]) | map(attribute='file') -%}
+          {%-   if _cassandra_apply_config_view[h].jmx_password -%}
           {%-     set _ = out.append(h) -%}
           {%-   endif -%}
           {%- endfor -%}
@@ -1611,16 +1654,6 @@
         cacheable: true  # its first facts (ansible/ansible#87148); the first node plays check them
       tags: [always]  # under --tags too
 
-    # once per node (the health checks read it many times, each time every node's variables)
-    - name: Note the other nodes that may stay down
-      ansible.builtin.set_fact:
-        # the other nodes where Cassandra is not running may stay down while a node is written without
-        # being taken down (none, start, write): those started later in the run (or not to do), those left
-        # stopped; a restart waits for every other node up (under --check, the nodes before it were not started)
-        _cassandra_apply_config_down_ok: >-
-          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_apply_config_down_ok(
-               hostvars, inventory_hostname, cassandra_apply_config_then, ansible_check_mode) }}
-
     # cassandra_java_version (the series' Java when the inventory has none) and the others the Java move reads
     # (java_install.yml, shared with update_java): the defaults loaded in an earlier play are not kept
     - name: Load the cassandra_install defaults
@@ -1635,7 +1668,10 @@
         tasks_from: node_operation.yml
       vars:
         cassandra_service_node_action: apply_config
-        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok }}"
+        # the other nodes where Cassandra is not running may stay down while a node is written without
+        # being taken down (none, start, write): those started later in the run (or not to do), those left
+        # stopped; a restart waits for every other node up (under --check, the nodes before it were not started)
+        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok_all.serial[inventory_hostname] }}"
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
 # What each node got; under --check, first the settings that differ (secrets masked), owner/mode changes included

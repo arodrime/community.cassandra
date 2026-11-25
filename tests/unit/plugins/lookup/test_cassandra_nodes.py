@@ -112,3 +112,35 @@ def test_playbooks_leave_the_absent_hosts_out():
                         if "groups[lookup('community.cassandra.cassandra_hosts')]" in line and rel != "playbooks/topology.yml":
                             found.add((rel, line))
     assert found == allowed
+
+
+class Counted(dict):
+    """hostvars counting the reads of a host's variables (each one costs a build of all of them)"""
+
+    def __init__(self, *args, **kwargs):
+        super(Counted, self).__init__(*args, **kwargs)
+        self.reads = 0
+
+    def __getitem__(self, key):
+        self.reads += 1
+        return super(Counted, self).__getitem__(key)
+
+
+def test_lookup_memo():
+    hostvars = Counted({"n1": {}, "n2": {"cassandra_node_state": "absent"}, "n3": {}, "m1": {}})
+    memo = render("{{ lookup('community.cassandra.cassandra_nodes', memo=true) }}", hostvars)
+    assert memo == {"group": "prod", "hosts": ["n1", "n2", "n3"],
+                    "states": {"n1": "present", "n2": "absent", "n3": "present"}}
+    # with the memo: no host's variables read again
+    hostvars.reads = 0
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, _cassandra_nodes_memo=memo) == ["n1", "n3"]
+    assert render("{{ query('community.cassandra.cassandra_nodes', state='absent') }}", hostvars,
+                  _cassandra_nodes_memo=memo) == ["n2"]
+    assert hostvars.reads == 0
+    # another group, or the group's hosts changed (add_host): read again
+    assert render("{{ query('community.cassandra.cassandra_nodes', group='all') }}", hostvars,
+                  _cassandra_nodes_memo=memo) == ["n1", "n3", "m1"]
+    groups = dict(GROUPS, prod=["n1", "n2", "n3", "m1"])
+    assert render("{{ query('community.cassandra.cassandra_nodes') }}", hostvars, _cassandra_nodes_memo=memo,
+                  groups=groups) == ["n1", "n3", "m1"]
+    assert hostvars.reads > 0

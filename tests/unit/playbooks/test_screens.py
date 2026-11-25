@@ -15,7 +15,8 @@ import yaml
 from ansible.plugins.loader import init_plugin_loader
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, templar_for, trust_as_template, trusted
+from ansible_collections.community.cassandra.tests.unit.helpers import (render_as_given, templar_for, trust_as_template, trusted,
+                                                                      with_apply_config_view)
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -312,11 +313,14 @@ APPLY_HOSTVARS = {
     "node5": {"cassandra_apply_config_todo": True, "cassandra_apply_config_then": "write"}}
 # the group "Group the nodes to do" puts them in
 APPLY_GROUPS = {"cassandra_apply_config_True": [h for h, v in sorted(APPLY_HOSTVARS.items()) if v["cassandra_apply_config_todo"]]}
+# what apply_config notes of every node once, read by its plan (its question, its head)
+APPLY_VIEW = with_apply_config_view({"hostvars": APPLY_HOSTVARS, "ansible_play_hosts": sorted(APPLY_HOSTVARS)})[
+    "_cassandra_apply_config_view"]
 APPLY_DIFF = ["cassandra.yaml  concurrent_reads  48 -> 32  node1"]
 
 
 def variables_of(t, play, cluster):
-    return dict(trusted(t["vars"]), **trusted(play["vars"]), hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster)
+    return dict(trusted(t["vars"]), **trusted(play["vars"]), hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS, **cluster)
 
 
 def render_question(t, variables):
@@ -332,7 +336,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
     # --check: no plan, the recap at the end is the plan, said once
     assert "not ansible_check_mode" in t["when"]
     # a real run: the settings that differ, then what each node gets, before its question
-    text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
+    text = screen(dict(cluster, ansible_play_hosts=["node1", "node2"], hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS,
                        cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
     assert text == ("APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 up to date\n"
                     "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n"  # (the version and commit)
@@ -340,7 +344,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
                     "DIFFERENCES FOUND\n  " + APPLY_DIFF[0] + "\n\n"  # titled as --check's, WILL DO a plan's
                     "WILL DO\n  node1  write + restart\n  node2  up to date")
     question = templar_for(dict(trusted(t["vars"]), **trusted(play["vars"]), ansible_play_hosts=hosts,
-                                hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS, **cluster))
+                                hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS, **cluster))
     # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
     # no cluster (the head names it), 61 columns at most (" Answer yes or no:" after it fits 79): too
     # long, the counts (the plan's rows name the nodes), the starts left out before the restarts
@@ -360,7 +364,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
                         (["node5"], "APPLY CONFIG  Orders  1 node with no Cassandra restart"),
                         (["node1", "node3", "node2"],
                          "APPLY CONFIG  Orders  Cassandra restarts on 1 node, 1 with no restart, 1 up to date")):
-        text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, groups=APPLY_GROUPS,
+        text = screen(dict(cluster, ansible_play_hosts=hosts, hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS,
                            cassandra_apply_config_diff=APPLY_DIFF), t["vars"], play["vars"])
         assert text.split("\n")[0] == head
     t, play = task("update_java.yml", "Show the plan and confirm the run")

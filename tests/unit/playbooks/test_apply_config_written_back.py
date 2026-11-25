@@ -21,6 +21,7 @@ import yaml
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     FIND, find, render, with_task_vars)
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, shell_script
+from ansible_collections.community.cassandra.tests.unit.helpers import with_apply_config_view
 
 AS_STARTED = find(FIND["tasks"], "Note the files written back as the running Cassandra started with them")
 NOTE = find(FIND["tasks"], "Note what this node needs")
@@ -307,7 +308,7 @@ def test_a_restart_into_none_from_a_file_at_none_already_is_the_point_of_no_retu
     def no_return(given="", then="restart", **reads):
         hostvars = dict((h, {"inventory_hostname": h, "cassandra_storage_mode_read": r, "cassandra_apply_config_then": then,
                              "cassandra_storage_mode_running": given}) for h, r in reads.items())
-        moved = render(task["vars"]["_moved"], {"hostvars": hostvars, "ansible_play_hosts": list(hostvars)})
+        moved = render(task["vars"]["_moved"], with_apply_config_view({"hostvars": hostvars, "ansible_play_hosts": list(hostvars)}))
         return render(template, {"_nodes": [], "hostvars": hostvars, "ansible_play_hosts": list(hostvars),
                                  "_moved": moved})
     assert no_return(n1=_mode_read("NONE", logged="UPGRADING"), n2=_mode_read("NONE", logged="NONE"),

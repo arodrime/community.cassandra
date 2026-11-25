@@ -16,7 +16,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_outcomes
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import cassandra_apply_config_recap
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given as render, trusted
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted, with_apply_config_view
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -26,6 +26,13 @@ TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
 with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
     PLAYS = yaml.safe_load(f)
+
+
+def render(template, variables):
+    """template rendered over variables, with the facts apply_config notes of every node once (its view)."""
+    if "hostvars" in variables and "ansible_play_hosts" in variables:
+        variables = with_apply_config_view(variables)
+    return render_as_given(template, variables)
 
 
 @pytest.fixture(autouse=True)
@@ -214,9 +221,9 @@ def test_a_real_run_refuses_before_any_change_check_goes_on():
 def test_check_lets_the_stopped_node_stay_down_for_a_restart_node():
     # under --check every node goes in the batch play: node1's check must not stop on node5 (refused, said in the
     # recap); a real run never gets there with node5 down
-    t = task("Note the other nodes that may stay down", "Apply the config where nothing is restarted, on these nodes at once")
-    expr = t["ansible.builtin.set_fact"]["_cassandra_apply_config_down_ok"]
-    variables = dict(HOSTVARS["node1"], hostvars=HOSTVARS, groups={"prod": HOSTS}, cassandra_hosts="prod",
+    play = "Apply the config where nothing is restarted, on these nodes at once"
+    expr = task("Apply the config on these nodes", play)["vars"]["cassandra_service_health_down_ok"]
+    variables = dict(hostvars=HOSTVARS, groups={"prod": HOSTS}, cassandra_hosts="prod", ansible_play_hosts=HOSTS,
                      inventory_hostname="node1")
     assert render(expr, dict(variables, ansible_check_mode=True)) == ["10.0.0.5"]
     assert render(expr, dict(variables, ansible_check_mode=False)) == []

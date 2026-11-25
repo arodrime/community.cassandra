@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2002  # +74: cassandra_axonops (run only with cassandra_axonops_enabled: an include, never loaded otherwise)
+TASKS_MAX = 2003  # +1: apply_config reads every node once (its nodes, its plan; 2 tasks less on each node)
 
 
 def tasks(items):
@@ -75,3 +75,44 @@ def test_the_preflight_reads_whether_cassandra_runs_from_its_unit():
     for read, running in (({"rc": 0, "stdout": "SubState=running"}, True), ({"rc": 0, "stdout": "SubState=dead"}, False),
                           ({"rc": 0, "stdout": "SubState=failed"}, False), ({"rc": 1, "stdout": ""}, False)):
         assert str(render(expr["_cassandra_preflight_running"], cassandra_node_facts_unit=read)) == str(running)
+
+
+def apply_config_plays():
+    with open(os.path.join(ROOT, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
+        return dict((p["name"], p) for p in yaml.safe_load(f) if "hosts" in p)
+
+
+def test_the_plays_that_write_read_no_other_node_per_node():
+    # each node of these plays reads what apply_config noted of every node once (its view, the nodes each one
+    # may find down), never every node's variables: read on each node, that cost grew with the square of the nodes
+    plays = apply_config_plays()
+    for name in ("Apply the OS settings, on these nodes at once", "Apply the config where nothing is restarted, on these nodes at once",
+                 "Apply the config, one node at a time"):
+        text = yaml.safe_dump(plays[name]["tasks"]).replace("hostvars['localhost']", "")
+        assert "hostvars" not in text, name
+        assert "cassandra_apply_config_down_ok(" not in text, name
+
+
+def test_the_cluster_nodes_and_the_view_are_read_once_per_run():
+    find = apply_config_plays()["Find what each node needs"]["tasks"]
+    names = [t.get("name") for t in find]
+    memo = find[names.index("Note the cluster's nodes for the run")]
+    assert memo["run_once"] is True and "memo=true" in memo["ansible.builtin.set_fact"]["_cassandra_nodes_memo"]
+    assert names.index("Note the cluster's nodes for the run") < names.index("Say what the run does")
+    for name in ("Note what the run needs of every node", "Note the other nodes each node may find down"):
+        assert find[names.index(name)]["run_once"] is True
+    # the refusal reads the view, not every node's variables
+    refused = find[names.index("Note whether restarts are refused while a node is not running")]
+    assert "hostvars" not in yaml.safe_dump(refused)
+    # the health checks read the ring's names from the run's
+    with open(os.path.join(ROOT, "roles", "cassandra_operation", "tasks", "cluster_health_read.yml"), encoding="utf-8") as f:
+        assert "_cassandra_run_addresses" in f.read()
+
+
+def test_the_view_is_noted_before_any_task_reads_it():
+    find = apply_config_plays()["Find what each node needs"]["tasks"]
+    names = [t.get("name") for t in find]
+    first = names.index("Note what the run needs of every node")
+    readers = [i for i, t in enumerate(find) if "_cassandra_apply_config_view" in yaml.safe_dump(t) and i != first]
+    assert readers and min(readers) > first
+    assert names.index("Note what this node needs") < first  # (the plan it reads)

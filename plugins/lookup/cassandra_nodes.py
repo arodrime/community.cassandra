@@ -26,6 +26,14 @@ options:
     description:
       - The group to read instead of the cluster's group (e.g. C(all)).
     type: str
+  memo:
+    description:
+      - Returns, instead of the hosts, the state of every host of the group, read once, as a playbook keeps it
+        in the variable C(_cassandra_nodes_memo) for the rest of its run. Each later call then reads that
+        variable instead of every host's variables (a cost that grows with the number of hosts, at each call),
+        as long as the group still has the same hosts.
+    type: bool
+    default: false
 author: Alain Rodriguez (@arodrime)
 """
 
@@ -40,9 +48,12 @@ EXAMPLES = r"""
 
 RETURN = r"""
 _raw:
-  description: The host names.
+  description:
+    - The host names.
+    - With C(memo=true), one dictionary instead, C(group), C(hosts) (the group's hosts) and C(states) (each
+      host's state).
   type: list
-  elements: str
+  elements: raw
 """
 
 from ansible.errors import AnsibleLookupError
@@ -78,6 +89,10 @@ class LookupModule(LookupBase):
             hosts_lookup = lookup_loader.get("community.cassandra.cassandra_hosts", loader=self._loader, templar=self._templar)
             group = hosts_lookup.run([], variables)[0]
         hosts = list((variables.get("groups") or {}).get(group) or [])
+        memo = variables.get("_cassandra_nodes_memo")
+        if not self.get_option("memo") and isinstance(memo, dict) and memo.get("group") == group \
+                and list(memo.get("hosts") or []) == hosts and isinstance(memo.get("states"), dict):
+            return [h for h in hosts if memo["states"].get(h) == state]
         hostvars = variables.get("hostvars") or {}
 
         def read(host):
@@ -90,4 +105,6 @@ class LookupModule(LookupBase):
             states = node_states(hosts, read)
         except ValueError as exc:
             raise AnsibleLookupError(str(exc))
+        if self.get_option("memo"):
+            return [{"group": group, "hosts": hosts, "states": states}]
         return [h for h in hosts if states[h] == state]

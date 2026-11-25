@@ -29,7 +29,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_conf
     cassandra_apply_config_diff, cassandra_apply_config_outcomes, cassandra_apply_config_warnings)
 from ansible_collections.community.cassandra.tests.unit.roles.config_reader import SNITCHES, compare  # noqa: E402 pylint: disable=wrong-import-position
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks  # noqa: E402 pylint: disable=wrong-import-position
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted, with_apply_config_view
 
 TOP = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -363,8 +363,8 @@ def test_under_check_a_node_refusing_the_jmx_login_is_checked_from_the_others():
     for check, host, before, not_peers in ((True, "n1", False, "n1"), (True, "n2", True, "n1"), (False, "n1", True, "")):
         variables = with_task_vars({"vars": dict((k, apply["vars"][k]) for k in (
             "_no_login", "cassandra_service_node_checks_before", "_cassandra_health_not_peers"))},
-            {"ansible_check_mode": check, "inventory_hostname": host, "hostvars": hostvars,
-             "ansible_play_hosts_all": ["n1", "n2", "n3"]})
+            with_apply_config_view({"ansible_check_mode": check, "inventory_hostname": host, "hostvars": hostvars,
+                                    "ansible_play_hosts_all": ["n1", "n2", "n3"], "ansible_play_hosts": ["n1", "n2", "n3"]}))
         assert variables["cassandra_service_node_checks_before"] in ((True, "True") if before else (False, "False"))
         assert variables["_cassandra_health_not_peers"] == not_peers
     # what node_operation.yml makes of it: no check of the node's own before its action

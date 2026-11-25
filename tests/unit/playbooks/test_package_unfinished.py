@@ -8,6 +8,7 @@ __metaclass__ = type
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
     find, load, render)
+from ansible_collections.community.cassandra.tests.unit.helpers import with_apply_config_view
 
 APPLY = load("playbooks", "apply_config.yml")
 REFUSE = "Refuse to restart or start a node whose Cassandra package is left half done"
@@ -18,7 +19,7 @@ def _tasks(plays):
 
 
 def _refusal(task, hostvars):
-    variables = dict(task["vars"], hostvars=hostvars, ansible_play_hosts=sorted(hostvars))
+    variables = with_apply_config_view(dict(task["vars"], hostvars=hostvars, ansible_play_hosts=sorted(hostvars)))
     return render(task["vars"]["_refusal"], variables)
 
 

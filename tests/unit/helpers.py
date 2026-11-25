@@ -207,3 +207,27 @@ def _dump(out):
     out = re.sub(r"/[^\s'\"]*/pytest-of-[^/]+/pytest-[0-9]+(/popen-gw[0-9]+)?", "<tmp>", out)
     with open(os.path.join(where, name + ".txt"), "w") as f:
         f.write(out)
+
+
+def _apply_config_task(name):
+    import yaml
+    with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
+        for play in yaml.safe_load(f):
+            for task in play.get("tasks") or []:
+                if task.get("name") == name:
+                    return task
+    raise AssertionError("no task %s in apply_config.yml" % name)
+
+
+def with_apply_config_view(variables):
+    """variables (hostvars, ansible_play_hosts; for the down nodes, also groups, cassandra_hosts,
+    ansible_check_mode) plus the facts apply_config notes of every node once, as its tasks build them:
+    _cassandra_apply_config_view and, with groups, _cassandra_apply_config_down_ok_all."""
+    variables = dict(variables)
+    view = _apply_config_task("Note what the run needs of every node")["ansible.builtin.set_fact"]
+    variables["_cassandra_apply_config_view"] = render_as_given(view["_cassandra_apply_config_view"], variables)
+    if "groups" in variables:
+        down = _apply_config_task("Note the other nodes each node may find down")["ansible.builtin.set_fact"]
+        variables["_cassandra_apply_config_down_ok_all"] = render_as_given(
+            down["_cassandra_apply_config_down_ok_all"], dict({"ansible_check_mode": False}, **variables))
+    return variables

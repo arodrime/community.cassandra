@@ -14,6 +14,8 @@
 # (this node has no Cassandra running yet, e.g. before it is added).
 # cassandra_service_health_down_ok: addresses expected down (a dead node being replaced);
 # cassandra_service_health_resumed_down: the same, for the node a resumed run stopped at.
+# _cassandra_run_addresses: the inventory names of the ring's addresses, when the playbook read them once for
+# its run (cassandra_host_addresses of its nodes; else read here, every node's variables at each check).
 # _cassandra_health_no_wait: true reads once, no wait (the nodes down_ok lists
 # will not come back; a report); nor a timeout under 20s.
 # cassandra_service_health_joining_ok: addresses expected joining (UJ: a bootstrap to wait for).
@@ -120,7 +122,8 @@
         _cassandra_health_going: "{{ _cassandra_health_wait_on | bool and _cassandra_health_waiting | length > 0 }}"
         # the inventory names of the addresses in the ring, for its progress lines (each node's variables: read once)
         _cassandra_health_names: >-
-          {{ query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars)
+          {{ (_cassandra_run_addresses if _cassandra_run_addresses is defined
+              else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars))
              if _cassandra_health_wait_on | bool and _cassandra_health_waiting | length > 0 else {} }}
       run_once: "{{ _batch }}"  # (a batch: on all its nodes)
 

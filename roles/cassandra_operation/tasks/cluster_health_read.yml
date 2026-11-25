@@ -226,6 +226,7 @@
                  leaving_ok=cassandra_service_health_leaving_ok | default([]),
                  any_ok=cassandra_service_health_any_ok | default([]),
                  names=_cassandra_health_read_names if _cassandra_health_read_names is defined
+                       else _cassandra_run_addresses if _cassandra_run_addresses is defined
                        else query('community.cassandra.cassandra_nodes') | community.cassandra.cassandra_host_addresses(hostvars),
                  mixed_versions=cassandra_allow_mixed_versions | default(false) | bool,
                  target=cassandra_package_version | default('')) }}

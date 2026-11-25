@@ -1,0 +1,5 @@
+---
+minor_changes:
+- "cassandra_nodes lookup - new option ``memo``: the state of every host of the group, read once, which a playbook keeps in ``_cassandra_nodes_memo`` for its run; later calls read it instead of every host's variables while the group has the same hosts."
+trivial:
+- "apply_config playbook - what the run needs of every node (its plan, its address and rack, the nodes each one may find down, the ring's names for the health checks) is read once for the run, not on each node: on ansible-core 2.16 each read of a node's variables builds them all, and that cost grew with the square of the nodes."

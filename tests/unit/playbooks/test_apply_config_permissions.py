@@ -15,7 +15,7 @@ import yaml
 
 from ansible.plugins.loader import init_plugin_loader
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted
+from ansible_collections.community.cassandra.tests.unit.helpers import render_as_given, trusted, with_apply_config_view
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
@@ -295,12 +295,9 @@ def test_apply_config_passes_a_member_seed_down(resume, down_ok, expected):
 def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
     play = [p for p in load("playbooks", "apply_config.yml") if p.get("name") == "Apply the config, one node at a time"][0]
     names = [t["name"] for t in play["tasks"]]
-    assert names == ["Give each node its own facts", "Note the other nodes that may stay down", "Load the cassandra_install defaults",
-                     "Apply the config on this node"]
-    # computed once per node, read by the health checks
-    include = dict(play["tasks"][3]["vars"], cassandra_service_health_down_ok=play["tasks"][1]["ansible.builtin.set_fact"][
-        "_cassandra_apply_config_down_ok"])
-    assert play["tasks"][3]["vars"]["cassandra_service_health_down_ok"] == "{{ _cassandra_apply_config_down_ok }}"
+    assert names == ["Give each node its own facts", "Load the cassandra_install defaults", "Apply the config on this node"]
+    # computed once for the run (every node's, from its view), read by the health checks
+    include = play["tasks"][2]["vars"]
     # n5: stopped with nothing to do (not in this play); n6: outside --limit (no fact)
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
@@ -313,7 +310,8 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
                                   (False, "n3", ["10.100.100.5"]), (False, "n4", []),
                                   # --check started nothing: a start node before the restart is still down
                                   (True, "n4", ["10.100.100.2"])):
-        values = dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host], ansible_check_mode=check)
+        values = with_apply_config_view(dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host],
+                                             ansible_check_mode=check, ansible_play_hosts=list(then)))
         down_ok = render(include["cassandra_service_health_down_ok"], values)
         assert down_ok == expected
         # no wait for them: they will not come back
@@ -329,10 +327,9 @@ def test_the_other_nodes_not_running_may_stay_down_unless_a_node_is_restarted():
 def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
     plays = load("playbooks", "apply_config.yml")
     batch = [p for p in plays if p.get("name") == "Apply the config where nothing is restarted, on these nodes at once"][0]
-    assert [t["name"] for t in batch["tasks"]] == ["Give each node its own facts", "Note the other nodes that may stay down",
-                                                   "Load the cassandra_install defaults", "Apply the config on these nodes"]
-    include = dict(batch["tasks"][3]["vars"], cassandra_service_health_down_ok=batch["tasks"][1]["ansible.builtin.set_fact"][
-        "_cassandra_apply_config_down_ok"])
+    assert [t["name"] for t in batch["tasks"]] == ["Give each node its own facts", "Load the cassandra_install defaults",
+                                                   "Apply the config on these nodes"]
+    include = batch["tasks"][2]["vars"]
     assert include["cassandra_service_node_batch"] is True and batch["any_errors_fatal"] is True and "serial" not in batch
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])
@@ -344,7 +341,8 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
     # stopped
     for host, expected in (("n1", ["10.100.100.2", "10.100.100.3", "10.100.100.5"]), ("n3", ["10.100.100.2", "10.100.100.5"]),
                            ("n4", ["10.100.100.2", "10.100.100.3", "10.100.100.5"])):
-        values = dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host], ansible_check_mode=host == "n4")
+        values = with_apply_config_view(dict(variables, inventory_hostname=host, cassandra_apply_config_then=then[host],
+                                             ansible_check_mode=host == "n4", ansible_play_hosts=list(then)))
         assert render(include["cassandra_service_health_down_ok"], values) == expected
     # done at once: the ones no restart or start takes down, every one under --check; the others one at a time
     group = [t for t in plays[1]["tasks"] if t.get("name") == "Group the nodes to do at once"][0]
@@ -368,7 +366,7 @@ def plan(nodes):
     """The hosts the restart refusal names (nodes: [(host, then, todo)] in inventory order)."""
     refusal = find(FIND["tasks"], "Note whether restarts are refused while a node is not running")
     hostvars = dict((h, {"cassandra_apply_config_then": t, "cassandra_apply_config_todo": d}) for h, t, d in nodes)
-    variables = {"ansible_play_hosts": [h for h, t, d in nodes], "hostvars": hostvars}
+    variables = with_apply_config_view({"ansible_play_hosts": [h for h, t, d in nodes], "hostvars": hostvars})
     variables = with_task_vars(refusal, variables)
     return render(refusal["ansible.builtin.set_fact"]["_cassandra_apply_config_refused"], variables) == [], variables["_down"]
 
