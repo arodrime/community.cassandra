@@ -58,7 +58,7 @@ def step_callback(tty, hosts=("node1", "node2", "node3")):
     import threading
     callback = quiet_callback(tty)
     callback._display = TerminalDisplay() if tty else callback._display
-    callback._seen, callback._gone, callback._through, callback._refused = set(), set(), set(), {}
+    callback._gone, callback._through, callback._refused = set(), set(), {}
     callback._lock, callback._seen = threading.RLock(), set(hosts)  # (the play's first task: every host)
     callback._display.verbosity = 0
     return callback
@@ -169,6 +169,8 @@ def test_a_step_stopped_by_an_error_says_no_time():
     finally:
         sys.stdout = real
     assert screen(out.getvalue())[:2] == [PHASE, ""]  # its phase line alone, as without a step
+    # logged once (its start), shown once (screen only)
+    assert [log_only for line, color, log_only in callback._display.shown if line == PHASE] == [True, False]
     callback = step_callback(tty=False)
     callback._print(PHASE, step=True)
     callback._print("node2: Stopped at node2", color=C.COLOR_ERROR)
@@ -212,9 +214,6 @@ def test_a_step_ends_with_its_play_or_its_run():
 
     class Play(object):
         hosts, order = ["node1"], None
-
-        def get_variable_manager(self):
-            raise AttributeError("no inventory")
     callback.v2_playbook_on_play_start(Play())
     assert callback._step is None and callback._seen == set()
     assert callback._display.shown[-1][0] == PHASE + "  done in 0s"
@@ -382,4 +381,4 @@ def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():
         callback._footer_at_exit()
     finally:
         sys.stdout = real
-    assert screen(out.getvalue())[-1] == "" and not any(r.endswith("0s") for r in screen(out.getvalue()))
+    assert not any(r.endswith("0s") for r in screen(out.getvalue()))

@@ -79,13 +79,15 @@ Conventions
   4/24  1m12s``: the play runs each task on every node before the next one, so the count goes up to 24 at each
   task); once over, ``...  done in 4m12s``. A message printed meanwhile goes above that line. In a log or a pipe:
   the phase line when it starts, a line with the count at a result after 5 minutes or more since the last one,
-  ``...  done in 4m12s`` once over (a ``log_path`` file the same, without the count lines). The count and the time
+  ``...  done in 4m12s`` once over (a terminal run's ``log_path`` file the same, without the count lines). The count and the time
   move at each result: a long task with no result yet leaves them as they are. A step
   stopped by an error or a progress line says no time (its phase line alone, as without a step). apply_config's
   steps: ``Checking the cluster (24 nodes)...``, ``Comparing the config with the inventory (24 nodes)...``, under
   ``--check`` ``Checking the cluster from each node (24 nodes)...``; in a real run, after the question,
   ``Applying the OS settings (3 nodes)...``, ``Writing the config (node1, node2)...`` (the nodes not restarted),
   ``Staging the config of the nodes to restart (22 nodes)...``, then the restarts' own lines.
+  A step's task comes after a task of its play that ran on every node (the count's nodes: those with a
+  result in the play so far).
 - **Prepare of new nodes** (add_node, replace_node, add_datacenter, create_cluster): after its phase line, one line
   per group of nodes with the same outcome, the steps in short words, in the progress colour (past 79 columns, a
   line goes on under its steps, cut between two steps or two seeds)::

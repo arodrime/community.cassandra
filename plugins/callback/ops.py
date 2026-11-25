@@ -811,7 +811,7 @@ class CallbackModule(DefaultCallback):
         line is Ansible's own (its error), never a step that looks still going on."""
         try:  # (no lock: a thread that held it is gone at exit)
             if self._footer is not None:
-                sys.stdout.write("\r\x1b[K" + ("\x1b[1A" if self._footer else ""))
+                sys.stdout.write("\r\x1b[K")  # (that row only: something else may have been written under it)
                 sys.stdout.flush()
                 self._footer = None
         except (IOError, OSError, ValueError):
