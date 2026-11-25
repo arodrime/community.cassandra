@@ -1,0 +1,117 @@
+---
+# The plan's part of the JMX users' files (cassandra_jmx_users; plan.yml): their rights checked, the files compared
+# with the users (on a node that is not blank, files with the same users and rights are left as they are), the ones
+# to write listed, the ones left as they are without the role's header found. access.yml writes them.
+- name: Compare the JMX users' files
+  when: cassandra_jmx_users | length > 0
+  vars:
+    # (no user with a password: an empty file; ansible-core 2.19+ renders an empty template as None)
+    _cassandra_jmx_password_content: "{{ lookup('ansible.builtin.template', 'jmxremote.password.j2') | default('', true) }}"
+    _cassandra_jmx_access_content: "{{ lookup('ansible.builtin.template', 'jmxremote.access.j2') | default('', true) }}"
+  block:
+    # the JVM refuses an access file with other rights, and then opens no remote JMX
+    - name: Check the JMX users' rights
+      ansible.builtin.assert:
+        that: _bad | length == 0
+        fail_msg: >-
+          cassandra_jmx_users: {{ _bad | join(', ') }}: each item needs a name, and an access readonly, or
+          readwrite with only the JDK's create <classes> and unregister rights after it, on one line (e.g.
+          readwrite unregister)
+        quiet: true
+      vars:
+        _bad: >-
+          {%- set cls = '[A-Za-z0-9_$*]+([.][A-Za-z0-9_$*]+)*' -%}
+          {%- set rights = '(readonly|readwrite([ \t]+(unregister|create[ \t]+' ~ cls ~ '([ \t]*,[ \t]*' ~ cls
+                           ~ ')*))*)[ \t]*$' -%}
+          {%- set out = [] -%}
+          {%- for user in cassandra_jmx_users -%}
+          {%-   set access = user.access | default('readwrite') | string -%}
+          {%-   if user.name is not defined or access is search('[\r\n]') or access is not match(rights) -%}
+          {%-     set _ = out.append(user.name | default('an item without name')) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # Like the config files: on a node that is not blank, files with the same
+    # users and rights (other comments, spacing or order) are left as they are,
+    # and so are the ones it has in cassandra_config_keep_files
+    - name: Compare the JMX files with the users
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_config_python }}"
+          - -c
+          - |
+            import json, os, sys
+            def entries(text):
+                text = text.replace("\\\n", " ")  # access lines go on after a backslash
+                words = [line.split() for line in text.split("\n") if line.strip() and not line.lstrip().startswith(("#", "!"))]
+                return sorted([w[0]] + sorted(w[1:]) for w in words)
+            wanted = json.loads(sys.stdin.read())
+            same = []
+            for name in ("password", "access"):
+                path = wanted["paths"][name]
+                if os.path.exists(path) and ("jmxremote." + name in wanted["keep"] or not wanted["normalize"]
+                                             and entries(open(path).read()) == entries(wanted[name])):
+                    same.append(name)
+            print(json.dumps(same))
+        stdin: >-
+          {{ {'password': _cassandra_jmx_password_content, 'access': _cassandra_jmx_access_content,
+              'paths': {'password': cassandra_jmx_remote_password_file, 'access': cassandra_jmx_remote_access_file},
+              'keep': cassandra_config_keep_files, 'normalize': cassandra_config_normalize | bool} | to_json }}
+      register: cassandra_config_jmx_same
+      changed_when: false
+      check_mode: false
+      no_log: true
+      when: _cassandra_config_initialized | default(false) | bool
+
+    # what the copies below write, for apply_config and the report: a file missing, or (compared) not the
+    # same users and rights; said as such, never their content (passwords)
+    - name: List the JMX files to write
+      ansible.builtin.set_fact:
+        _cassandra_config_jmx_changes: "{{ _changes }}"
+      vars:
+        # (not compared: an empty list, and only the missing files listed; none would render as "None" on 2.16)
+        _compared: "{{ cassandra_config_jmx_same.stdout is defined }}"
+        _same: "{{ cassandra_config_jmx_same.stdout | from_json if cassandra_config_jmx_same.stdout is defined else [] }}"
+        _changes: >-
+          {%- set out = [] -%}
+          {%- for name in ['password', 'access'] -%}
+          {%-   set f = 'jmxremote.' ~ name -%}
+          {%-   set live = cassandra_config_live_stat.results | default([]) | selectattr('cassandra_config_file', 'equalto', f)
+                           | first | default({}) -%}
+          {%-   set missing = not (live.stat.exists | default(false)) -%}
+          {%-   if missing or (_compared | bool and name not in _same) -%}
+          {%-     set _ = out.append({'file': f, 'missing': missing,
+                                      'path': cassandra_jmx_remote_password_file if name == 'password'
+                                              else cassandra_jmx_remote_access_file}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # The role's header line added to a JMX file left as it is (the same users and rights: comments are not read)
+    # that lacks it: a comment, no restart for it; not to one kept by hand (cassandra_config_keep_files)
+    - name: Find the JMX files left as they are without the role's header
+      ansible.builtin.command:
+        argv:
+          - "{{ _cassandra_config_python }}"
+          - -c
+          - "{{ lookup('ansible.builtin.file', role_path ~ '/../../plugins/plugin_utils/cassandra_config_header.py') }}"
+        stdin: "{{ {'find': _files} | to_json }}"
+      register: cassandra_config_jmx_header
+      changed_when: false
+      check_mode: false  # reads only
+      when: _files | length > 0
+      vars:
+        _files: >-
+          {%- set out = [] -%}
+          {%- for name in cassandra_config_jmx_same.stdout | default('[]') | from_json
+                     if 'jmxremote.' ~ name not in cassandra_config_keep_files -%}
+          {%-   set line = (_cassandra_jmx_password_content if name == 'password' else _cassandra_jmx_access_content).splitlines()
+                           | select('search', _cassandra_config_header_mark | regex_escape) | first | default('') -%}
+          {%-   if line -%}
+          {%-     set _ = out.append({'file': 'jmxremote.' ~ name, 'header': line, 'mark': _cassandra_config_header_mark,
+                                      'path': cassandra_jmx_remote_password_file if name == 'password'
+                                              else cassandra_jmx_remote_access_file}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}

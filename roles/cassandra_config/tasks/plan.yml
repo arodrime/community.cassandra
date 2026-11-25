@@ -1,0 +1,71 @@
+---
+# The plan: what the role would change on the node, worked out from what it reads there; nothing is written
+# (apply_plan.yml says, confirms and writes what it lists). The only code that decides what the role changes:
+# apply_config's compare runs it on every node.
+- name: Check the variables
+  ansible.builtin.import_tasks: checks.yml
+
+- name: Check that the Cassandra package's config is there
+  ansible.builtin.stat:
+    path: "{{ _cassandra_config_pkg_conf_dir }}"
+  register: cassandra_config_pkg_conf
+
+- name: Stop if Cassandra is not installed
+  ansible.builtin.fail:
+    msg: "{{ _cassandra_config_pkg_conf_dir }} not found: install Cassandra first (cassandra_install)"
+  when:
+    - not cassandra_config_pkg_conf.stat.exists
+    - not ansible_check_mode
+
+- name: Nothing to compare yet (--check before the package is installed)
+  ansible.builtin.set_fact:
+    _cassandra_config_items:
+      - item: config files
+        before: Cassandra not installed yet
+        after: "{{ _cassandra_config_files[_cassandra_config_series] | length }} files templated"
+  when: not cassandra_config_pkg_conf.stat.exists
+
+- name: Check the variables against the release to install
+  ansible.builtin.import_tasks: since.yml
+  when: not cassandra_config_pkg_conf.stat.exists
+
+- name: Work out the changes
+  when: cassandra_config_pkg_conf.stat.exists
+  block:
+    - name: Read the node
+      ansible.builtin.import_tasks: read.yml
+
+    - name: Tell whether the node is blank
+      ansible.builtin.import_tasks: node_state.yml
+
+    - name: Compare the new files with the live ones
+      ansible.builtin.import_tasks: compare.yml
+
+    # (its restart, by the run or later, would take it back: Cassandra starts with the earlier mode, or not at all;
+    # or more than one step ahead, CASSANDRA_4 to NONE)
+    - name: Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: storage_mode_guard.yml
+      vars:
+        _cassandra_storage_mode_written: true  # the inventory's mode, written then restarted with
+      when: cassandra_version == '50x'
+
+    - name: List what to change
+      ansible.builtin.import_tasks: changes.yml
+
+    - name: Compare the JMX users' files
+      ansible.builtin.import_tasks: access_plan.yml
+
+    # Skipped in check mode (--check, or check_mode applied to the role, as apply_config's preview does): this run
+    # only looks, else it writes the files
+    - name: Tell a run that writes from one that only looks
+      ansible.builtin.command: "true"
+      register: _cassandra_config_exporter_writes
+      changed_when: false
+
+    # (in a run that writes: once the JVM options file is written, prometheus_exporter_cleanup.yml)
+    - name: Find what the exporter's agent no longer needs (a run that only looks)
+      ansible.builtin.include_tasks: prometheus_exporter_find.yml
+      when: _cassandra_config_exporter_writes is skipped
+

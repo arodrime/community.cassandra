@@ -226,8 +226,8 @@ def test_the_role_refuses_the_variables_no_longer_read():
                    " files that set it. Nothing is changed.")
 
 
-CONFIRM = load_tasks(os.path.join(ROLE, "tasks", "confirm.yml"))
-MOVES = find_task(CONFIRM, "Find whether the audit events would move to audit.log")
+CHANGES = load_tasks(os.path.join(ROLE, "tasks", "changes.yml"))
+MOVES = find_task(CHANGES, "Find whether the audit events would move to audit.log")
 
 
 @pytest.mark.parametrize("live_audit, in_inventory, audit_file, said", [

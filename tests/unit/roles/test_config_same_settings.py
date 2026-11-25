@@ -228,7 +228,7 @@ with open(os.path.join(TEMPLATES, "jmxremote.access.j2"), encoding="utf-8") as f
     ACCESS = f.read()
 with open(os.path.join(TEMPLATES, "jmxremote.password.j2"), encoding="utf-8") as f:
     PASSWORD = f.read()
-JMX_SCRIPT = task("Compare the JMX files with the users", "access.yml")["ansible.builtin.command"]["argv"][2]
+JMX_SCRIPT = task("Compare the JMX files with the users", "access_plan.yml")["ansible.builtin.command"]["argv"][2]
 # the role's header line, first in both JMX files (# comments: the JVM reads them as properties files)
 JMX_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
 
@@ -264,7 +264,7 @@ def test_jmx_rights_only_and_rights_of_their_own():
     ([{"name": "a", "access": "readwrite unregister create a.*, b.C"}, {"name": "b", "access": "readwrite\tunregister"}], []),
 ])
 def test_jmx_rights_the_jvm_refuses_are_refused(users, bad):
-    check = task("Check the JMX users' rights", "access.yml")
+    check = task("Check the JMX users' rights", "access_plan.yml")
     assert render(check["vars"]["_bad"], cassandra_jmx_users=users) == bad
 
 
@@ -276,7 +276,7 @@ def test_jmx_rights_the_jvm_refuses_are_refused(users, bad):
 ])
 def test_jmx_rights_the_import_carries_are_the_ones_the_role_takes(access):
     from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_jvm import JMX_RIGHTS
-    check = task("Check the JMX users' rights", "access.yml")
+    check = task("Check the JMX users' rights", "access_plan.yml")
     refused = render(check["vars"]["_bad"], cassandra_jmx_users=[{"name": "x", "access": access}]) == ["x"]
     assert refused == (JMX_RIGHTS.match(access) is None)
 
@@ -424,7 +424,7 @@ def test_the_files_left_as_they_are_carry_the_sha1_of_their_rendering():
     # the record of the next start has it (config_snapshot.yml): written back later as the role renders it, the file
     # holds the settings that start read (e2e: a release update, then a hand edit, said "restart pending")
     import hashlib
-    confirm = task("List the files to change and whether to ask first", "confirm.yml")
+    confirm = task("List the files to change and whether to ask first", "changes.yml")
     new = {"cassandra.yaml": HEADER + "x: 1\n", "jvm-server.options": HEADER + "-Xss256k\n", "logback.xml": "<b/>"}
     variables = dict(_kept=["cassandra.yaml", "jvm-server.options", "logback.xml"], _keep=["logback.xml"],
                      _cassandra_config_new=new, _cassandra_config_live_sha1={"cassandra.yaml": "d1", "logback.xml": "d3"})

@@ -226,6 +226,7 @@ def test_the_role_reads_a_missing_live_cassandra_yaml_as_none():
 
 
 ACCESS_TASKS = load("roles", "cassandra_config", "tasks", "access.yml")
+ACCESS_PLAN = load("roles", "cassandra_config", "tasks", "access_plan.yml")
 JMX_USERS = [{"name": "ops", "password": "s3cret", "access": "readwrite"}, {"name": "mon", "password": "m0n", "access": "readonly"}]
 # (the role's header line first: a comment, the JVM reads them as properties files)
 JMX_HEADER = "# Managed by Ansible (community.cassandra.cassandra_config): change the role variables, not this file.\n"
@@ -250,7 +251,7 @@ def jmx_compare(tmp_path, live, initialized=True, extra=None):
         with open(os.path.join(templates, "jmxremote.%s.j2" % name), encoding="utf-8") as f:
             wanted[name] = render(f.read(), {"cassandra_jmx_users": JMX_USERS})
     assert wanted["password"] == JMX_FILES["password"] and wanted["access"] == JMX_FILES["access"]
-    compare_task = find(ACCESS_TASKS, "Compare the JMX files with the users")
+    compare_task = find(ACCESS_PLAN, "Compare the JMX files with the users")
     variables = dict({"_cassandra_config_initialized": initialized, "cassandra_config_normalize": False}, **(extra or {}))
     if all(render("{{ %s }}" % w, variables) in (True, "True") for w in [compare_task["when"]]):
         same = subprocess.run([sys.executable, "-c", compare_task["ansible.builtin.command"]["argv"][2]],
@@ -261,7 +262,8 @@ def jmx_compare(tmp_path, live, initialized=True, extra=None):
     live_stat = [{"cassandra_config_file": "jmxremote." + n, "stat": stat(paths[n], live.get(n) is not None)} for n in paths]
     variables.update({"cassandra_config_live_stat": {"results": live_stat}, "_cassandra_config_items": [],
                       "cassandra_jmx_remote_password_file": paths["password"], "cassandra_jmx_remote_access_file": paths["access"]})
-    variables.update(set_facts(find(ACCESS_TASKS, "List the JMX files to write"), variables))
+    variables.update(set_facts(find(ACCESS_PLAN, "List the JMX files to write"), variables))
+    variables.update(set_facts(find(ACCESS_TASKS, "Record the JMX files to write for the report"), variables))
     # the copies that write them (the others' owner and mode only)
     variables["written"] = [n for n in ("password", "access")
                             if render("{{ %s }}" % find(ACCESS_TASKS, "Write jmxremote." + n)["when"], variables) in (True, "True")]

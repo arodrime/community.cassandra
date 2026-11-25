@@ -1,0 +1,122 @@
+---
+# The plan's lists (plan.yml): what the role would change on the node, from what read.yml, node_state.yml
+# and compare.yml found; nothing written, nothing said (confirm.yml says them).
+# On a node that is not blank, a file with the same settings (only comments,
+# blank lines or their layout differ, e.g. no header: set up by hand) is left as it is
+# (but for the role's header line, added below)
+- name: List the files to change and whether to ask first
+  ansible.builtin.set_fact:
+    _cassandra_config_kept: "{{ _kept }}"
+    # those (not the ones kept by hand) with the sha1 of the file read and of the rendering of the same settings:
+    # {file: {disk, same}}, recorded with the next start (config_snapshot.yml of cassandra_service; header.yml when
+    # the header is added), so that the file written back later as the role renders it is known to hold the
+    # settings that start read
+    _cassandra_config_same_as: >-
+      {%- set out = {} -%}
+      {%- set live = _cassandra_config_live_sha1 | default({}) -%}
+      {%- for f in _kept if f not in _keep and live.get(f) and f in _cassandra_config_new -%}
+      {%-   set _ = out.update({f: {'disk': live[f], 'same': _cassandra_config_new[f] | hash('sha1')}}) -%}
+      {%- endfor -%}
+      {{ out }}
+    # kept as the node has them, but not there: written from the template, the hand edits lost
+    _cassandra_config_keep_missing: >-
+      {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | rejectattr('stat.exists')
+         | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
+    _cassandra_config_changes: >-
+      {{ cassandra_config_preview.results | selectattr('stdout') | map(attribute='cassandra_config_file')
+         | reject('in', _kept) | list }}
+    # _cassandra_config_no_question: the caller's own question covered it (an -e cassandra_config_confirm
+    # beats the caller's cassandra_config_confirm: false, not this)
+    _cassandra_config_ask: >-
+      {{ cassandra_config_preview.results | selectattr('stdout') | rejectattr('cassandra_config_file', 'in', _kept)
+         | list | length > 0
+         and not _cassandra_config_no_question | default(false) | bool
+         and (_cassandra_config_initialized | bool if cassandra_config_confirm | string | lower == 'auto'
+              else cassandra_config_confirm | bool) }}
+  vars:
+    _kept: >-
+      {%- set out = [] -%}
+      {%- for f in cassandra_config_preview.results | map(attribute='cassandra_config_file') if f in _cassandra_config_compared -%}
+      {%-   set live = _cassandra_config_compared[f] -%}
+      {%-   if live is not none and live | b64decode | community.cassandra.cassandra_same_settings(
+                 _cassandra_config_new[f], f, cassandra_config_storage_dir or cassandra_jvm.storagedir | default('')) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out + _keep }}
+    # (where the node has them, on a node that is not blank: a new one's are the package's)
+    _keep: >-
+      {{ cassandra_config_keep_stat.results | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | list if _cassandra_config_initialized | bool else [] }}
+
+# A file left as it is (same settings) without the role's header line ("Managed by Ansible ...: change the role
+# variables, not this file"): the header added, nothing else (header.yml), no restart for it: a comment, the file with
+# it has the same settings (cassandra_config_header checks it). Not a file kept by hand (cassandra_config_keep_files):
+# left exactly as it is
+- name: List the files left as they are that get the role's header
+  ansible.builtin.set_fact:
+    _cassandra_config_header: >-
+      {%- set out = [] -%}
+      {%- set compared = _cassandra_config_compared | default({}) -%}
+      {%- for f in _cassandra_config_kept if f not in cassandra_config_keep_files and compared.get(f) is not none -%}
+      {%-   set line = compared[f] | b64decode | community.cassandra.cassandra_config_header(
+                         _cassandra_config_new[f], f, cassandra_config_storage_dir or cassandra_jvm.storagedir | default('')) -%}
+      {%-   if line -%}
+      {%-     set _ = out.append({'file': f, 'path': cassandra_conf_dir ~ '/' ~ f, 'header': line, 'mark': _cassandra_config_header_mark,
+                                  'sha1': (_cassandra_config_live_sha1 | default({})).get(f, '')}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+# cassandra_log_audit_file left to its default (on with FileAuditLogger) while the node's logback.xml has the AUDIT
+# appender commented out (an inventory imported by a 2.1.0 release candidate): the audit events would leave
+# system.log for audit/audit.log; said once for the nodes of the run
+- name: Find whether the audit events would move to audit.log
+  ansible.builtin.set_fact:
+    _cassandra_config_audit_moves: >-
+      {{ 'logback.xml' in _cassandra_config_changes and cassandra_log_audit_file | bool
+         and 'cassandra_log_audit_file' not in hostvars[inventory_hostname]
+         and (_cassandra_config_compared | default({})).get('logback.xml') is not none
+         and (_cassandra_config_compared | default({})).get('logback.xml') | default('', true) | b64decode
+             is not search('(?m)^\s*<appender\s(?:[^>]*\s)?name\s*=\s*["\x27]AUDIT["\x27]') }}
+
+# Cassandra cannot start on a file its account cannot read: changed even when the content is not
+- name: List the owner, group and mode changes
+  ansible.builtin.set_fact:
+    _cassandra_config_perm_changes: >-
+      {{ cassandra_config_live_stat.results | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) }}
+    # the files the template task writes: all of them (but the ones kept), as before the role compared
+    # them, unless the live one is a regular file with the same content, owner, group and mode (a file
+    # missing or not read, a link, or /etc/cassandra/conf about to point elsewhere: written)
+    _cassandra_config_write: >-
+      {%- set alternative = cassandra_rpm_conf_alternative | regex_replace('(?<=.)/+$', '') -%}
+      {%- set target = cassandra_config_conf_target.stat.lnk_source | default('') if cassandra_config_conf_target is not skipped
+                       else alternative -%}
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_preview.results -%}
+      {%-   set f = r.cassandra_config_file -%}
+      {%-   set live = cassandra_config_live_stat.results | selectattr('cassandra_config_file', 'equalto', f) | first -%}
+      {%-   if r.rc != 0 or f in _cassandra_config_links or target != alternative or not live.stat.exists | default(false)
+               or [live] | community.cassandra.cassandra_permission_changes(_cassandra_config_perm_settings) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: List the owner, group and mode changes of the directories
+  ansible.builtin.set_fact:
+    _cassandra_config_dir_changes: >-
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_dir_try.results | default([]) if r.rc | default(1) != 0 -%}{%- set _ = out.append(r.item) -%}{%- endfor -%}
+      {{ out }}
+
+- name: Note the dirs another account owns
+  ansible.builtin.set_fact:
+    _cassandra_config_dir_notes: >-
+      {%- set out = [] -%}
+      {%- for r in cassandra_config_dir_foreign.results | default([]) if r.stdout_lines | default([]) -%}
+      {%-   set _ = out.append('WARNING  data dir ' ~ r.item.item.1 ~ ': not owned by ' ~ _cassandra_config_perm_settings.user ~ ': '
+                               ~ r.stdout_lines[:3] | join(', ') ~ (', ...' if r.stdout_lines | length > 3 else '')
+                               ~ ' (left as they are: chown -R them if Cassandra cannot read them)') -%}
+      {%- endfor -%}
+      {{ out }}

@@ -739,7 +739,7 @@ def test_the_jmx_files_of_a_local_jmx_node_are_left_as_they_are(tmp_path):
     assert not variables.get("cassandra_jmx_users") and "jmxremote.password" not in rendered
     assert check(files, "50x", java="17", cmdline=cmdline)["differences"] == []
     tasks = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "roles", "cassandra_config", "tasks")
-    block = find_task(load_tasks(os.path.join(tasks, "access.yml")), "Write the JMX users")
+    block = find_task(load_tasks(os.path.join(tasks, "access_plan.yml")), "Compare the JMX users' files")
     assert block["when"] == "cassandra_jmx_users | length > 0"
     assert [t for t in block["block"] if t.get("name") == "List the JMX files to write"]  # (_cassandra_config_jmx_changes)
 

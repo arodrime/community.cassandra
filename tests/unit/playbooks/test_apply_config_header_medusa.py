@@ -167,7 +167,7 @@ def test_the_header_is_added_after_the_seed_and_not_to_the_jmx_files_kept_by_han
     apply = load("roles", "cassandra_config", "tasks", "apply.yml")
     seed = apply[0]
     assert "_cassandra_config_header | default([])" in seed["when"][1]
-    access = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "access.yml"))
+    access = load_tasks(os.path.join(TOP, "roles", "cassandra_config", "tasks", "access_plan.yml"))
     find_jmx = find(access, "Find the JMX files left as they are without the role's header")
     variables = {"cassandra_config_jmx_same": {"stdout": '["password", "access"]'},
                  "cassandra_config_keep_files": ["jmxremote.password"], "_cassandra_config_header_mark": MARK,

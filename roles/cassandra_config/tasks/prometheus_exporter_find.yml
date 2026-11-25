@@ -1,0 +1,130 @@
+---
+# What the Prometheus exporter's agent no longer needs (prometheus_exporter_cleanup.yml says and removes it): read
+# by the plan in a run that only looks (plan.yml), by the cleanup once the JVM options file is written in a run that
+# writes (_cassandra_config_exporter_writes, the plan's: skipped in check mode)
+- name: Find what the exporter's agent no longer needs
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - |
+        dir=$1 keep=$2 conf=$3 on=$4 files=$5 to_write=$6 if_missing=$7 user=$8 include=$9
+        list="$dir/.cassandra_config"
+        unused=$(
+          if [ -f "$list" ]; then
+            while IFS= read -r jar; do
+              case "$jar" in ''|*/*) continue ;; esac
+              if [ "$on" != on ] || [ "$jar" != "$keep" ]; then [ -f "$dir/$jar" ] && echo "jar|$dir/$jar"; fi
+            done < "$list"
+            [ "$on" = on ] || echo "list|$list"
+          fi
+          if [ "$on" != on ]; then
+            grep -qs '^# Managed by Ansible (community.cassandra.cassandra_config)' "$conf/jmx_prometheus.yml" \
+              && echo "config|$conf/jmx_prometheus.yml"
+            [ -f "$conf/jmx_prometheus.at_start" ] && echo "record|$conf/jmx_prometheus.at_start"
+          fi
+        )
+        [ -n "$unused" ] || exit 0
+        # off, the next start may still load the role's jar or config: nothing removed while a line a start reads
+        # names the exporter (jmx_prometheus: its jar or its config, however reached; kept, it costs a warning,
+        # removed, Cassandra would not start)
+        if [ "$on" != on ]; then
+          root=${10}  # (the tests' host)
+          # the unit and its drop-ins: those systemd has loaded (systemctl cat: the "# <path>" line each starts with)
+          # and those on disk (one added without a daemon-reload is read at the next start), each once
+          units=$(
+            {
+              systemctl cat cassandra 2>/dev/null \
+                | awk '(NR == 1 || previous == "") && /^# \// { print substr($0, 3) } { previous = $0 }' \
+                | sed "s|^|$root|"
+              for d in /etc /run /usr/lib /lib; do
+                ls -d "$root$d/systemd/system/cassandra.service" "$root$d"/systemd/system/cassandra.service.d/*.conf \
+                  2>/dev/null
+              done
+            } | while IFS= read -r u; do [ -f "$u" ] && echo "$(readlink -f "$u") $u"; done | awk '!seen[$1]++ { print $2 }'
+          )
+          # the EnvironmentFiles they name (EnvironmentFile = -/path, quoted or not)
+          env_files=$(
+            for u in $units; do sed -n 's/^[[:space:]]*EnvironmentFile[[:space:]]*=[[:space:]]*//p' "$u" 2>/dev/null; done \
+              | tr -d "\"'" | tr ' ' '\n' | sed -n "s|^-\{0,1\}\(/.*\)|$root\1|p"
+          )
+          # the cassandra.in.sh bin/cassandra sources: CASSANDRA_INCLUDE (of cassandra_service_environment, the unit,
+          # its EnvironmentFiles, /etc/default/cassandra), else the first of these there
+          includes=$(
+            cat $units $env_files "$root/etc/default/cassandra" 2>/dev/null | grep -v '^[[:space:]]*[#;]' \
+              | sed -n "s/.*CASSANDRA_INCLUDE=[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" | sed -n "s|^/|$root/|p"
+          )
+          home=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+          start_files="${include:+$root$include} $includes ${home:+$root$home/.cassandra.in.sh}
+            $root/usr/share/cassandra/cassandra.in.sh $root/usr/sbin/cassandra.in.sh
+            $root/usr/local/share/cassandra/cassandra.in.sh $root/opt/cassandra/cassandra.in.sh
+            $root/etc/default/cassandra $env_files"
+          {
+            for f in $files $units $start_files; do
+              case "$f" in /*) path=$f ;; *) path=$conf/$f ;; esac
+              grep -v '^[[:space:]]*[#;]' "$path" 2>/dev/null | grep -qF jmx_prometheus || continue
+              name=${f#"$root"}
+              case " $(echo $units) " in
+                *" $f "*) case "$name" in
+                    /etc/systemd/system/cassandra.service.d/override.conf) kind=override ;;
+                    *) # the role's unit, the roles' drop-in of the package's init script: by their header
+                       if grep -qs '^# Managed by Ansible (community.cassandra.cassandra_service)' "$f"; then kind=role-unit
+                       else case "$name" in *.service.d/*) kind=drop-in ;; *) kind=unit ;; esac; fi ;;
+                  esac ;;
+                *) case "$f" in /*) kind=file ;; *) kind=conf ;; esac ;;
+              esac
+              echo "kept|$name|$kind"
+            done
+            for f in $if_missing; do [ -e "$conf/$f" ] || echo "kept|$f|conf"; done
+            for f in $to_write; do
+              case "$f" in cassandra_service_environment) echo "kept|$f|role-unit" ;; *) echo "kept|$f|conf" ;; esac
+            done
+          } | awk '!seen[$0]++' | grep . && exit 0
+        fi
+        echo "$unused"
+      - sh
+      - "{{ cassandra_prometheus_exporter_dir | regex_replace('(?<=.)/+$', '') }}"
+      - "{{ _cassandra_config_exporter_jar | basename }}"
+      - "{{ cassandra_conf_dir | regex_replace('(?<=.)/+$', '') }}"
+      - "{{ 'on' if cassandra_prometheus_exporter_enabled | bool else 'off' }}"
+      - "{{ _on_node | join(' ') }}"
+      - "{{ _to_write | join(' ') }}"
+      - "{{ _if_missing | join(' ') }}"
+      - "{{ cassandra_service_user | default(cassandra_user) }}"
+      - "{{ _unit_env.CASSANDRA_INCLUDE | default('') }}"
+      - ""
+  register: cassandra_config_exporter_unused
+  changed_when: false
+  check_mode: false  # reads only
+  vars:
+    # (as the script finds it: any line naming the exporter's jar or config, jmx_prometheus)
+    _agent: jmx_prometheus
+    # the series' cassandra-env.sh and JVM options files: all of them (a Java other than cassandra_java_version's
+    # reads another)
+    _jvm_files: >-
+      {{ _cassandra_config_files[_cassandra_config_series]
+         | select('match', '^(jvm[0-9]*-server[.]options|cassandra-env[.]sh)$') | list }}
+    _writes: "{{ _cassandra_config_exporter_writes is not skipped }}"
+    _unit_env: >-
+      {{ cassandra_service_environment | default({}) if cassandra_service_environment | default({}) is mapping
+         else {} }}
+    # read on the node: in a run that writes, as written; in one that only looks, the ones kept as they are
+    _on_node: "{{ _jvm_files if _writes | bool else _jvm_files | select('in', cassandra_config_keep_files) | list }}"
+    # (the role's render, their lines but comments)
+    _render_gives: >-
+      {%- set out = [] -%}
+      {%- for f in _jvm_files -%}
+      {%-   if (_cassandra_config_new | default({}))[f] | default('') | regex_replace('(?m)^[ \t]*#.*$', '')
+               is search(_agent) -%}
+      {%-     set _ = out.append(f) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+    # what is to be written: only looking, the files the role writes as it renders them; the unit's environment
+    # cassandra_service writes
+    _to_write: >-
+      {{ ([] if _writes | bool else _render_gives | reject('in', cassandra_config_keep_files) | list)
+         + (['cassandra_service_environment'] if _unit_env.values() | map('string') | join(' ') is search(_agent)
+            else []) }}
+    # only looking: a file kept but not on the node yet, written as the role renders it
+    _if_missing: "{{ [] if _writes | bool else _render_gives | select('in', cassandra_config_keep_files) | list }}"

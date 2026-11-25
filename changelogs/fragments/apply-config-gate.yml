@@ -1,0 +1,3 @@
+---
+trivial:
+- "cassandra_config role - its tasks split into the plan (``plan.yml``: the reads, compares and lists, the JMX users' files compared there too) and the rest (``apply_plan.yml``: what it says, asks and writes); ``main.yml`` runs both, as before."
