@@ -44,8 +44,11 @@ def test_an_installed_collection_reads_its_manifest(tmp_path):
     assert cassandra_build.label(str(tmp_path), built="1a2b3c4d5e6f") == "community.cassandra 3.0.0, commit 1a2b3c4d5e6f"
 
 
-def test_nothing_known_is_said_unknown(tmp_path):
-    assert cassandra_build.label(str(tmp_path), built="") == "community.cassandra version unknown, commit unknown"
+def test_only_what_is_known_is_said(tmp_path):
+    # (owner, rc1) an installed collection not built by tools/build.sh: its version alone, never "commit unknown"
+    assert cassandra_build.label(str(tmp_path), built="") == "community.cassandra"
+    (tmp_path / "MANIFEST.json").write_text(json.dumps({"collection_info": {"version": "3.0.0-rc1"}}))
+    assert cassandra_build.label(str(tmp_path), built="") == "community.cassandra 3.0.0-rc1"
 
 
 def git(where, *args):

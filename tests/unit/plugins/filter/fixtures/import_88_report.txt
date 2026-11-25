@@ -1,8 +1,18 @@
-IMPORT big_cluster  88 nodes  9 entries to review: 3 hand-edit entries, 6 settings that differ between nodes
-  in sync with Ansible: not all verified; OS settings not managed by Ansible on
-    22 nodes
-  self-check passed: the inventory gives every node that was read the settings it has now
-  written: inventories/big.yml, group_vars/big_cluster*/, host_vars/<node>/ of 88 nodes
+IMPORT big_cluster  88 nodes  9 entries to review
+  3 hand-edit entries
+  6 settings that differ between nodes
+
+  in sync with Ansible: not all verified
+    OS settings not managed by Ansible on 22 nodes
+
+  self-check passed
+    every node read: its settings are in the inventory
+
+  written:
+    inventories/big.yml
+    group_vars/big_cluster*/
+    host_vars/<node>/ of 88 nodes
+
   report:  reports/big/report.txt
 
 

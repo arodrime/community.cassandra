@@ -4,7 +4,7 @@
 
 The version is galaxy.yml's (a git tree) or MANIFEST.json's (an installed collection). The commit is COMMIT below,
 which tools/build.sh writes in the copy it builds (an installed collection has no .git); in a git tree of the
-collection, its HEAD. Neither found: said unknown, never guessed."""
+collection, its HEAD. What is not found is not said, never guessed."""
 
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
@@ -56,6 +56,7 @@ def commit(root=ROOT, built=None):
 
 
 def label(root=ROOT, built=None):
-    """"community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f"; "version unknown", "commit unknown" for what is not
-    known."""
-    return "community.cassandra %s, commit %s" % (version(root) or "version unknown", commit(root, built) or "unknown")
+    """"community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f": what is known only (an installed collection not built
+    by tools/build.sh: "community.cassandra 3.0.0-rc1"; neither known: "community.cassandra")."""
+    found = commit(root, built)
+    return " ".join(["community.cassandra"] + [v for v in [version(root)] if v]) + (", commit %s" % found if found else "")

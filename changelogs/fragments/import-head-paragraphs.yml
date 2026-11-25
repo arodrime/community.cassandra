@@ -1,0 +1,3 @@
+---
+trivial:
+- "import_cluster playbook - the head of the screen and of report.txt is laid out a paragraph per subject (the counts, in sync with Ansible, the self-check, the files written, made by), each a short line then one fact per row; the rows under ``in sync with Ansible`` take its colour in the ops callback. The ``made by`` lines say only what is known: the version alone when the commit is not (no ``commit unknown``)."

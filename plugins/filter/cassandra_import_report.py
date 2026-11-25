@@ -1916,24 +1916,34 @@ def _jvm_rewrites(report, self_check):
     return sorted(files)
 
 
-# the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it: yes green, not all
-# verified orange, no red), within 79 columns
+# the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it, the rows under it the
+# same: yes green, not all verified orange, no red): its line, then one fact per row, within 79 columns
 SYNC = "in sync with Ansible: "
 SYNC_WIDTH = 79
 
 
-def _sync_lines(report, data, self_check, self_check_error, moves):
+def _sync_lines(report, data, self_check, self_check_error):
     """Whether applying the inventory changes the cluster: no (the self-check's differences: how many settings on
     how many nodes), not all verified (nodes not read, parts or files kept by hand, a self-check that did not run:
-    what, on how many nodes), else yes, with what the next apply_config rewrites with no effect on the values (the
-    JVM's files with the same arguments: no restart, apply_config proves it again before writing them) -> [line]."""
-    def said(text):
-        return fill_text(SYNC + text, min(report.width, SYNC_WIDTH), "  ", "  ")
+    what, on how many nodes, a row each), else yes, with what the next apply_config rewrites with no effect on the
+    values, a row each (the JVM's files with the same arguments: no restart, apply_config proves it again before
+    writing them) -> [line].
+    e.g. ["  in sync with Ansible: yes", "    the next apply_config:",
+          "      rewrites 3 files with the same JVM arguments, no restart"]."""
+    width = min(report.width, SYNC_WIDTH)
+
+    def said(answer, rows=(), head=None):
+        lines = ["  " + SYNC + answer]
+        if head:
+            lines.append("    " + head)
+        for row in rows:
+            lines += fill_text(row, width, "      " if head else "    ", "  ")
+        return lines
     differing = dict((name, len(check.get("differences") or [])) for name, check in (self_check or {}).items()
                      if check.get("differences"))
     if differing:
-        return said("no; apply_config would change %s on %s" % (
-            unbreakable(out.plural(sum(differing.values()), "setting")), unbreakable(out.plural(len(differing), "node"))))
+        return said("no", ["apply_config would change %s on %s" % (
+            unbreakable(out.plural(sum(differing.values()), "setting")), unbreakable(out.plural(len(differing), "node")))])
     gaps = []
     if self_check_error:
         gaps.append("the self-check did not run")
@@ -1941,7 +1951,7 @@ def _sync_lines(report, data, self_check, self_check_error, moves):
         gaps.append("%s not read (%s)" % (unbreakable(out.plural(len(report.unread), "node")),
                                           out.nodes([n["name"] for n in report.unread])))
     for parts, members in sorted(data["kept_parts"].items()):
-        gaps.append("%s kept by hand on %s" % (", ".join(parts), unbreakable(out.plural(len(members), "node"))))
+        gaps += ["%s kept by hand on %s" % (part, unbreakable(out.plural(len(members), "node"))) for part in parts]
     kept = {}
     for name, f in data["kept"]:
         kept.setdefault(f, set()).add(name)
@@ -1952,7 +1962,7 @@ def _sync_lines(report, data, self_check, self_check_error, moves):
             gaps.append("%s not managed by Ansible on %s" % (INSTALLED.get(label, label),
                                                              unbreakable(out.plural(len(members), "node"))))
     if gaps:
-        return said("not all verified; " + "; ".join(gaps))
+        return said("not all verified", gaps)
     others = sorted(set(note[:-len(NO_EFFECT_NOTE)].split(": ")[1] if note.count(": ") > 1
                         else note[:-len(NO_EFFECT_NOTE)]
                         for check in (self_check or {}).values() for note in check.get("notes") or []
@@ -1960,40 +1970,41 @@ def _sync_lines(report, data, self_check, self_check_error, moves):
     rewrites = []
     files = _jvm_rewrites(report, self_check)
     if files:
-        rewrites.append("%s rewritten, no restart (the same JVM arguments)" % out.plural(len(files), "file"))
+        rewrites.append("rewrites %s with the same JVM arguments, no restart" % out.plural(len(files), "file"))
     if others:
-        rewrites.append("%s rewritten with no effect" % out.plural(len(others), "other item" if moves else "item"))
-    return said("yes" + ("; the next apply_config: " + ", ".join(rewrites) if rewrites else ""))
+        rewrites.append("rewrites %s with no effect" % out.plural(len(others), "other item" if files else "item"))
+    return said("yes", rewrites, "the next apply_config:" if rewrites else None)
 
 
 def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync=()):
-    """The head: the verdict with its counts, in sync with Ansible or not (sync), the self-check, the files
-    written, where the report is -> [line]."""
+    """The head, a paragraph per subject, a short line then one fact per row: the verdict with its counts, in sync
+    with Ansible or not (sync), the self-check, the files written, where the report is and what made it -> [line].
+    e.g. ["IMPORT c1  3 nodes  2 entries to act on", "  1 TODO", "  1 thing worth a look", "",
+          "  in sync with Ansible: no", "    apply_config would change 1 setting on 1 node", "",
+          "  self-check not passed yet: TODO step 1", "", "  written:", "    inventories/c1.yml", "    group_vars/c1*/"]."""
     acted = len(steps) + sum(n for dummy, n, dummy2 in reviews)
-    # (each count kept on one line when the head wraps: never "2" at a line's end, "things worth a look" below)
-    counts = [c.replace(" ", out.NBSP) for c in (["%d TODO" % len(steps)] if steps else []) + [
-        "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]]
+    counts = (["%d TODO" % len(steps)] if steps else []) + [
+        "%d %s" % (n, kind.one if n == 1 else kind.many) for kind, n, dummy in reviews]
     nodes = out.plural(len(report.read) + len(report.unread), "node") + (
         " (%d read)" % len(report.read) if report.unread else "")
-    verdict = "%s to %s: %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review", ", ".join(counts)) \
-        if acted else "nothing to act on"
-    lines = fill_text("IMPORT %s%s  %s%s  %s" % (cluster, " (--check, inventory not written)" if report.check else "",
-                                                 report.when + "  " if report.when else "", nodes, verdict),
+    verdict = "%s to %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review") if acted \
+        else "nothing to act on"
+    lines = fill_text("IMPORT %s  %s%s  %s" % (cluster, report.when + "  " if report.when else "", nodes, verdict),
                       report.width, "", "  ")
-    lines += list(sync)
+    lines += ["  " + count for count in counts]
+    if report.check:
+        lines.append("  --check: inventory not written")
+    lines += [""] + list(sync) + [""]
     check_step = next((i + 1 for i, step in enumerate(steps) if step.title == "Make the self-check pass"), None)
-    lines += fill_text("self-check %s" % (
-        "passed: the inventory gives every node that was read the settings it has now" if self_check_ok
-        else "not passed yet: TODO step %d" % check_step if check_step
-        else "not passed yet: the inventory does not reproduce the nodes"), report.width, "  ", "  ")
+    lines += ["  self-check passed", "    every node read: its settings are in the inventory"] \
+        if self_check_ok else ["  self-check not passed yet: TODO step %d" % check_step] if check_step \
+        else ["  self-check not passed yet", "    the inventory does not reproduce the nodes"]
     with_vars = sorted(h for h, v in (report.layout.get("host_vars") or {}).items() if v)
-    written = ", ".join([out.path_from(hosts_file, report.cwd), "group_vars/%s*/" % cluster]
-                        + ([_host_dirs(with_vars, report.full)] if with_vars else []))
-    lines += fill_text("%s %s" % ("unchanged:" if same else "would write:" if report.check else "written:", written),
-                       report.width, "  ", "  ")
-    if not report.screen:  # (the screen ends with it)
-        lines.append("  report:  %s" % out.path_from(report_file, report.cwd))
-    return lines + _made_by(report)
+    lines += ["", "  %s" % ("unchanged:" if same else "would write:" if report.check else "written:")] + [
+        "    " + path for path in [out.path_from(hosts_file, report.cwd), "group_vars/%s*/" % cluster]
+        + ([_host_dirs(with_vars, report.full)] if with_vars else [])]
+    about = ([] if report.screen else ["  report:  %s" % out.path_from(report_file, report.cwd)]) + _made_by(report)
+    return lines + ([""] + about if about else [])
 
 
 def _made_by(report):
@@ -2198,7 +2209,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     that found the same says so: its time is new); build: true for a line of the head with the collection's version
     and the git commit it was built from ("made by:", cassandra_build.label; the playbook's calls give it, false by
     default: no git or galaxy.yml read). Returns the lines.
-    e.g. -> ["IMPORT big_cluster  88 nodes  3 to act on: 3 hand edits", "  self-check passed: ...", ...]."""
+    e.g. -> ["IMPORT big_cluster  88 nodes  3 entries to review", "  3 hand-edit entries", "", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]
@@ -2216,7 +2227,6 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
                      when=out.clock(float(run_time), now=0) if run_time not in (None, "") else "",
                      build=cassandra_build.label() if boolean(build, strict=False) else "")
     changed, removed, same = _inventory_changes(changes)
-    moves = sorted({f for n in read for f in n.get("rewritten") or []})
 
     if boolean(details, strict=False):
         return _finished(_details_report(report, data, layout, self_check, leftovers, convergence, cluster), width,
@@ -2226,7 +2236,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     differs = _differs(report, data["settings"])
     reviews = _review_blocks(report, data, differs, allow_unread, look,
                              below=not self_check_ok and (not screen or boolean(strict, strict=False)))
-    sync = _sync_lines(report, data, self_check, self_check_error, moves)
+    sync = _sync_lines(report, data, self_check, self_check_error)
     lines = _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync)
     if steps:
         lines += ["", "TODO"]

@@ -38,6 +38,13 @@ def report(nodes, ok=True, layout_extra=None, **kwargs):
     return cassandra_import_report(*args, **kwargs) + [""] + cassandra_import_report(*args, details=True, **kwargs)
 
 
+def paragraph(lines, first):
+    """A paragraph of the head: its line starting with first, the rows under it (up to a blank line)."""
+    at = next(i for i, line in enumerate(lines) if line.startswith(first))
+    end = next((i for i in range(at + 1, len(lines)) if not lines[i].strip()), len(lines))
+    return lines[at:end]
+
+
 def heading(lines, title):
     """Where a section starts: its title in a rule of = (==== TO REVIEW ====...)."""
     return next(i for i, line in enumerate(lines) if line.startswith("==== %s =" % title))
@@ -86,13 +93,16 @@ def test_node_lists_in_their_shortest_exact_form():
 
 def test_clean_import_nothing_to_act_on():
     lines = report([node(i) for i in range(1, 6)])
-    assert lines[:5] == ["IMPORT my_cluster  5 nodes  nothing to act on",
-                         "  in sync with Ansible: yes",
-                         "  self-check passed: the inventory gives every node that was read the settings it has now",
-                         "  written: inventories/my_cluster.yml, group_vars/my_cluster*/",
-                         "  report:  reports/my_cluster/report.txt"]
+    assert lines[:12] == ["IMPORT my_cluster  5 nodes  nothing to act on", "",
+                          "  in sync with Ansible: yes", "",
+                          "  self-check passed",
+                          "    every node read: its settings are in the inventory", "",
+                          "  written:",
+                          "    inventories/my_cluster.yml",
+                          "    group_vars/my_cluster*/", "",
+                          "  report:  reports/my_cluster/report.txt"]
     # each section: two blank lines, its title in a rule, a blank line; what the report is: in the details
-    assert lines[5:9] == ["", "", "==== WHAT TO DO NEXT " + "=" * 76, ""]
+    assert lines[12:16] == ["", "", "==== WHAT TO DO NEXT " + "=" * 76, ""]
     assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
     assert not has(lines, "TODO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
     assert has(report([node(1)], details=True), "WHAT THIS REPORT IS")
@@ -129,8 +139,9 @@ def test_sections_by_urgency_and_the_counts_in_the_head():
     nodes = [node(1, hand=["cassandra.yaml, line 10:", "  - concurrent_writes: 32", "  + concurrent_writes: 48"]),
              node(2, "16G"), node(3, keep={"cassandra_config_keep_files": ["logback.xml"]}), node(4, read=False)]
     lines = report(nodes, secrets_clear=["group_vars/my_cluster/secrets.yml"])
-    assert lines[0] == ("IMPORT my_cluster  4 nodes (3 read)  5 entries to act on: 2 TODO, 1 hand-edit entry, 1 file left as is,"
-                        " 1 setting that differs between nodes")
+    assert paragraph(lines, "IMPORT") == ["IMPORT my_cluster  4 nodes (3 read)  5 entries to act on", "  2 TODO",
+                                          "  1 hand-edit entry", "  1 file left as is",
+                                          "  1 setting that differs between nodes"]
     order = [heading(lines, title) for title in ("TODO", "HAND EDITS", "DIFFERENT ON SOME NODES",
                                                  "LEFT AS THE NODES HAVE THEM", "WHAT TO DO NEXT", "WHAT THIS REPORT IS",
                                                  "FOR INFO", "DETAILS")]
@@ -183,13 +194,14 @@ def test_values_that_differ_between_nodes_to_review():
         "      then 2 nodes change, restart unknown (apply_config does not write it); no check (apply_config does not show"
         " it)"]
     # (the most common heap for the cluster, the others per host)
-    assert lines[3] == "  written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/<node>/ (node4, node5)"
+    assert paragraph(lines, "  written:")[1:] == ["    inventories/my_cluster.yml", "    group_vars/my_cluster*/",
+                                                  "    host_vars/<node>/ (node4, node5)"]
     lines = report([node(1, keep={"cassandra_firewall_manage": False}), node(2)])
     # (a part Ansible does not manage on a node: not all verified)
-    assert sync(lines) == "in sync with Ansible: not all verified; firewall not managed by Ansible on 1 node"
-    assert "  written: inventories/my_cluster.yml, group_vars/my_cluster*/, host_vars/node1/" in lines[:5]
+    assert sync(lines) == ["  in sync with Ansible: not all verified", "    firewall not managed by Ansible on 1 node"]
+    assert paragraph(lines, "  written:")[-1] == "    host_vars/node1/"
     seven = [node(i) for i in range(1, 5)] + [node(i, "16G") for i in range(5, 8)]
-    assert report(seven, screen=True)[3].endswith("host_vars/<node>/ (node5..node7)")  # the screen: a range
+    assert paragraph(report(seven, screen=True), "  written:")[-1] == "    host_vars/<node>/ (node5..node7)"  # the screen: a range
 
 
 def test_where_each_value_is_kept_and_the_dcs_name_the_nodes():
@@ -213,10 +225,10 @@ def test_things_to_do_and_hand_edits():
                    leftovers={"unsure": ["host_vars/old/main.yml"]},
                    self_check={"node1": {"differences": ["cassandra.yaml: concurrent_writes"], "notes": []}})
     # (a self-check not passed: a step to do, said calmly, not in red)
-    assert lines[0].startswith("IMPORT my_cluster  4 nodes (3 read)  6 entries to act on: 4 TODO, 2 hand-edit")
+    assert lines[:3] == ["IMPORT my_cluster  4 nodes (3 read)  6 entries to act on", "  4 TODO", "  2 hand-edit entries"]
     # (a difference found: not in sync, whatever else is not verified)
-    assert lines[1] == "  in sync with Ansible: no; apply_config would change 1 setting on 1 node"
-    assert lines[2] == "  self-check not passed yet: TODO step 2"
+    assert sync(lines) == ["  in sync with Ansible: no", "    apply_config would change 1 setting on 1 node"]
+    assert paragraph(lines, "  self-check") == ["  self-check not passed yet: TODO step 2"]
     titles = [line for line in lines if re.match(r"^  \d\. ", line)]
     assert titles[:4] == ["  1. Let the import read node4 (1 node), then import again", "  2. Make the self-check pass",
                           "  3. Encrypt the passwords file",
@@ -289,8 +301,9 @@ def test_check_says_the_secrets_are_not_written_yet():
 def test_screen_and_check():
     lines = report([node(i) for i in range(1, 4)], check=True, screen=True, report_file=REPORT_CHECK,
                    leftovers={"stale": ["host_vars/gone/main.yml"]})
-    assert lines[0] == "IMPORT my_cluster (--check, inventory not written)  3 nodes  nothing to act on"
-    assert lines[3].startswith("  would write: ") and lines[4] == " "  # the report's path: last (" ": a blank line)
+    assert lines[:2] == ["IMPORT my_cluster  3 nodes  nothing to act on", "  --check: inventory not written"]
+    assert paragraph(lines, "  would write:")[1:] == ["    inventories/my_cluster.yml", "    group_vars/my_cluster*/"]
+    assert " " in lines[:12] and "" not in lines[:12]  # (the head's blank lines: " ", blank on the screen)
     assert "  1. Write the inventory: the same command without --check." in lines
     assert lines[-1] == "report: reports/my_cluster/report.check.txt"  # written, report.txt left
     assert not has(lines, "WORTH A LOOK") and not has(lines, "DETAILS")
@@ -346,15 +359,8 @@ def test_differs_from_your_group_vars_all():
         "    cassandra_config_user (the owner of the config files): root, yours: cassandra (group_vars/all/standard.yml)"
         "   node1, node2 (2 nodes)",
         "      kept as the nodes have it (in host_vars/<node>/main.yml); to apply yours, delete it there, then apply_config"]
-    assert lines[0].endswith("2 entries to review: 2 things worth a look")  # (not again as settings that differ)
-    # a head that wraps keeps each count whole ("2" never at a line's end, its words below)
-    for width in range(40, 90):
-        head = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, width=width)
-        head = head[:head.index("  in sync with Ansible: yes") if "  in sync with Ansible: yes" in head else 3]
-        text = " ".join(x.strip() for x in head)
-        assert "2 things worth a look" in text, (width, head)
-        assert not any(re.search(r"\b2$", x) for x in head), (width, head)
-        assert all(u"\xa0" not in x for x in head)
+    assert lines[:3] == ["IMPORT my_cluster  5 nodes  2 entries to review", "  2 things worth a look", ""]
+    # (not again as settings that differ)
     # the screen has it too
     screen = cassandra_import_report(layout, WRITTEN, REPORT, {}, True, cwd="/p", in_git=True, screen=True, width=160)
     assert review[0] in screen and screen[-3:] == ["", "details: reports/my_cluster/report.details.txt", "report: reports/my_cluster/report.txt"]
@@ -377,11 +383,12 @@ def test_reimport_check_with_nothing_to_change():
     # the whole screen: the head, what to do next, the report's path; nothing else
     unchanged = {"changed": [], "removed": [], "existed": ["my_cluster.yml", "group_vars/my_cluster/main.yml"]}
     screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=unchanged)
-    assert screen[:5] == [
-        "IMPORT my_cluster (--check, inventory not written)  3 nodes  nothing to act on",
-        "  in sync with Ansible: yes",
-        "  self-check passed: the inventory gives every node that was read the settings it has now",
-        "  unchanged: inventories/my_cluster.yml, group_vars/my_cluster*/", " "]  # (a blank line on the screen)
+    assert screen[:12] == [
+        "IMPORT my_cluster  3 nodes  nothing to act on", "  --check: inventory not written", " ",
+        "  in sync with Ansible: yes", " ",
+        "  self-check passed",
+        "    every node read: its settings are in the inventory", " ",
+        "  unchanged:", "    inventories/my_cluster.yml", "    group_vars/my_cluster*/", " "]  # (" ": blank on the screen)
     assert screen[-1] == "report: reports/my_cluster/report.txt"
     assert not [line for line in screen if "Write the inventory" in line or "git commit" in line]
     # a thing to do still says so
@@ -394,7 +401,8 @@ def test_check_says_what_it_would_write():
     first = {"changed": ["my_cluster.yml", "group_vars/my_cluster/main.yml", "group_vars/my_cluster/secrets.yml"],
              "removed": [], "existed": []}
     screen = report([node(i) for i in range(1, 4)], check=True, screen=True, changes=first)
-    assert screen[3] == "  would write: inventories/my_cluster.yml, group_vars/my_cluster*/"
+    assert paragraph(screen, "  would write:") == ["  would write:", "    inventories/my_cluster.yml",
+                                                   "    group_vars/my_cluster*/"]
     assert "  1. Write the inventory: the same command without --check (3 new files)." in screen
     # a re-import: the files that change, the ones it removes
     again = {"changed": ["group_vars/my_cluster/main.yml", "host_vars/node4/main.yml"],
@@ -496,7 +504,7 @@ def test_hand_edits_by_file_counted():
         "    logback.xml (the logging settings)    all - node5",
         "      3 edits   node1, node2, node4 (3 nodes)", "      1 edit   node3 (1 node)", "",
         "    jvm11-server.options (Java's options, Java 11 only)    node4", "      1 edit", ""]
-    assert lines[0] == "IMPORT my_cluster  5 nodes  3 entries to review: 3 hand-edit entries"  # (no TODO)
+    assert lines[:2] == ["IMPORT my_cluster  5 nodes  3 entries to review", "  3 hand-edit entries"]  # (no TODO)
     # the ways out once: keep the files as the nodes have them, carry the edits, drop them
     assert "    to keep them as the nodes have them  -e import_keep_hand_edits=cassandra.yaml,logback.xml," \
            "jvm11-server.options" in hand
@@ -547,7 +555,7 @@ def test_a_logback_hand_edit_says_the_templates_of_yours():
 def test_written_host_vars_counted_on_a_large_cluster():
     nodes = [node(i, "16G" if i % 4 == 1 else "8G") for i in range(1, 60, 2)]  # node1, node3...: no range
     lines = report(nodes, screen=True)
-    assert lines[3].endswith("host_vars/<node>/ of 15 nodes")  # (a tie: node1's 16G for the cluster, the 8G ones apart)
+    assert paragraph(lines, "  written:")[-1] == "    host_vars/<node>/ of 15 nodes"  # (a tie: node1's 16G for the cluster, the 8G ones apart)
     again = {"changed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)] + ["group_vars/my_cluster/main.yml"],
              "removed": [], "existed": ["host_vars/node%d/main.yml" % i for i in range(1, 30)]
              + ["group_vars/my_cluster/main.yml"]}
@@ -594,7 +602,7 @@ def test_kept_files_left_as_is_to_review():
         "    jmxremote.access   node1 (1 node)",
         "      1 edit that no variable carries (each under DETAILS): Ansible leaves the file as each node has it; nothing"
         " to do while they are wanted"]
-    assert "1 file left as is" in lines[0]
+    assert "  1 file left as is" in paragraph(lines, "IMPORT")
 
 
 def test_the_screen_width_is_ansibles(monkeypatch):
@@ -1440,7 +1448,7 @@ def test_an_entry_of_the_run_worth_a_look():
     assert section(lines, "WORTH A LOOK") == [
         "    the inventory of ansible.cfg (/p/inventories) was not read: this run had -i node1,",
         "      its variables did not apply to this run"]
-    assert lines[0].endswith("1 entry to review: 1 thing worth a look")
+    assert lines[:2] == ["IMPORT my_cluster  3 nodes  1 entry to review", "  1 thing worth a look"]
     assert section(report([node(i) for i in range(1, 4)], screen=True, look=look), "WORTH A LOOK")[0] == lines[
         heading(lines, "WORTH A LOOK") + 2]
 
@@ -1509,7 +1517,8 @@ SYNC = "  in sync with Ansible: "
 
 
 def sync(lines):
-    """The head's in-sync line, its next line joined (79 columns at most each)."""
+    """The head's in sync paragraph: its line, the rows under it (79 columns at most each, never a wrapped row:
+    each row indented as deep as its kind)."""
     at = next(i for i, line in enumerate(lines) if line.startswith(SYNC))
     said = [lines[at]]
     for line in lines[at + 1:]:
@@ -1517,39 +1526,68 @@ def sync(lines):
             break
         said.append(line)
     assert all(len(line) <= 79 for line in said), said
-    return " ".join(line.strip() for line in said)
+    return said
 
 
 def test_in_sync_yes_with_the_rewrites_and_no_restart_for_them():
-    assert sync(report([node(i) for i in range(1, 4)])) == "in sync with Ansible: yes"
+    assert sync(report([node(i) for i in range(1, 4)])) == ["  in sync with Ansible: yes"]
     # the JVM arguments moved into the collection's layout: apply_config writes the files with the same JVM arguments
     # (cassandra_apply_config_no_effect: no restart); OS rewrites with no effect said apart
     moved = [node(i, rewritten=["cassandra-env.sh", "jvm-server.options"]) for i in range(1, 4)]
     os_note = "cassandra_linux: /etc/systemd/system/disable-thp.service: another content -> the role's" \
         ", no effect (the node keeps the values it has now)"
-    lines = report(moved, self_check={"node%d" % i: {"differences": [], "notes": [os_note]} for i in range(1, 4)},
-                   screen=True, width=200)
-    # (apply_config proves it again before it writes them, and restarts no node for them)
-    assert sync(lines) == ("in sync with Ansible: yes; the next apply_config: 2 files rewritten, no restart (the"
-                           " same JVM arguments), 1 other item rewritten with no effect")
-    assert lines[1].startswith(SYNC + "yes; the next apply_config: 2 files rewritten")
+    checks = {"node%d" % i: {"differences": [], "notes": [os_note]} for i in range(1, 4)}
+    lines = report(moved, self_check=checks, screen=True, width=200)
+    # (apply_config proves it again before it writes them, and restarts no node for them); a row each
+    assert sync(lines) == ["  in sync with Ansible: yes",
+                           "    the next apply_config:",
+                           "      rewrites 2 files with the same JVM arguments, no restart",
+                           "      rewrites 1 other item with no effect"]
+    # the OS rewrites alone: not "other"
+    assert sync(report([node(i) for i in range(1, 4)], self_check=checks, screen=True))[2:] == [
+        "      rewrites 1 item with no effect"]
 
 
 def test_in_sync_not_all_verified_says_what_and_where():
     lines = report([node(1), node(2), node(3, read=False)], ok=False, allow_unread=True)
-    assert sync(lines) == "in sync with Ansible: not all verified; 1 node not read (node3)"
-    # parts kept by hand (import_keep_hand_edits), a file left as the node has it: Ansible does not manage them
+    assert sync(lines) == ["  in sync with Ansible: not all verified", "    1 node not read (node3)"]
+    # parts kept by hand (import_keep_hand_edits), a file left as the node has it: Ansible does not manage them; a
+    # row each, never "a, b kept by hand"
     kept = [node(1, keep={KEPT_PARTS_VAR: ["sysctl", "firewall"]}), node(2, keep={KEPT_PARTS_VAR: ["sysctl", "firewall"]}),
             node(3, keep={"cassandra_config_keep_files": ["logback.xml"]})]
-    assert sync(report(kept)) == ("in sync with Ansible: not all verified; sysctl, firewall kept by hand on 2 nodes;"
-                                  " logback.xml left as is on 1 node")
+    assert sync(report(kept)) == ["  in sync with Ansible: not all verified",
+                                  "    sysctl kept by hand on 2 nodes",
+                                  "    firewall kept by hand on 2 nodes",
+                                  "    logback.xml left as is on 1 node"]
 
 
 def test_in_sync_no_counts_the_settings_and_the_nodes():
     check = {"node1": {"differences": ["cassandra.yaml: concurrent_reads: 8 -> 16", "x: 1 -> 2"]},
              "node2": {"differences": ["cassandra.yaml: concurrent_reads: 8 -> 16"]}}
     lines = report([node(1), node(2), node(3)], ok=False, self_check=check, screen=True, strict=False)
-    assert sync(lines) == "in sync with Ansible: no; apply_config would change 3 settings on 2 nodes"
+    assert sync(lines) == ["  in sync with Ansible: no", "    apply_config would change 3 settings on 2 nodes"]
+
+
+def test_the_head_a_paragraph_per_subject_one_fact_per_row():
+    # (owner, rc1) the head's subjects apart, each a short line then its rows; no row wider than 79 columns
+    lines = report([node(1), node(2, "16G"), node(3, read=False)], ok=False, allow_unread=True, check=True,
+                   screen=True, width=79, build=True)
+    head = lines[:lines.index(next(x for x in lines if x.startswith("==== ")))]
+    assert all(len(line) <= 79 for line in head), head
+    paragraphs = [p.split("\n") for p in "\n".join(head).strip().split("\n \n")]
+    assert paragraphs[:4] == [
+        ["IMPORT my_cluster  3 nodes (2 read)  2 entries to review", "  1 setting that differs between nodes",
+         "  1 node not read", "  --check: inventory not written"],
+        ["  in sync with Ansible: not all verified", "    1 node not read (node3)"],
+        ["  self-check not passed yet", "    the inventory does not reproduce the nodes"],
+        ["  would write:", "    inventories/my_cluster.yml", "    group_vars/my_cluster*/", "    host_vars/node2/"]]
+    assert paragraphs[4][0].startswith("  made by:  community.cassandra ") and len(paragraphs) == 5
+
+
+def test_the_head_says_the_counts_a_row_each():
+    lines = report([node(1), node(2, "16G"), node(3, read=False)], ok=False, allow_unread=True, details=False)
+    assert lines[0] == "IMPORT my_cluster  3 nodes (2 read)  2 entries to review"
+    assert all(re.match(r"  \d+ \w", row) for row in lines[1:3]) and lines[3] == "", lines[:4]
 
 
 def test_a_dict_key_most_nodes_do_not_set_is_given_as_the_collections_default():
@@ -1661,7 +1699,8 @@ def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go(
         assert "every node up to date" not in said
         assert ("expected: cassandra-env.sh rewritten, no restart (the same JVM arguments; cassandra-env.sh as stock: %s),"
                 " nothing else" % words) in said, said
-        assert "in sync with Ansible: yes; the next apply_config: 1 file rewritten, no restart" in said
+        assert sync(lines)[1:] == ["    the next apply_config:",
+                                   "      rewrites 1 file with the same JVM arguments, no restart"]
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], details=False))
     assert "expected: every node up to date (header lines aside: a comment, no restart)" in said
 

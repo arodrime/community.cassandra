@@ -1920,6 +1920,41 @@ def test_a_verdict_that_names_its_host_names_it_once(tmp_path):
     assert "node1: node1:" not in output and "fatal: [node1]" not in output
 
 
+def import_head_shown(**kwargs):
+    """The head of an import screen (3 nodes, an entry worth a look) as the callback prints it: [(line, colour)] up
+    to the first section's rule, its blank lines left out."""
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_report import (
+        report, node)
+    look = [("the inventory of ansible.cfg was not read: this run had -i node1,", "its variables did not apply")]
+    callback = quiet_callback(tty=False)
+    callback._print(report(kwargs.pop("nodes", [node(i) for i in range(1, 4)]), screen=True, width=79, look=look,
+                           build=True, **kwargs))
+    shown = [(line, color) for line, color, dummy in callback._display.shown if line.strip()]
+    return shown[1:next(i for i, (line, dummy) in enumerate(shown) if i and line.startswith("===="))]
+
+
+@pytest.mark.parametrize("answer", ["yes", "not all verified", "no"])
+def test_the_import_head_one_colour_per_row_its_rows_as_their_line(answer):
+    # (owner, rc1) "in sync with Ansible: yes; ... no" green, its wrapped "restart (the same JVM argument)" blue: each
+    # row of the in sync paragraph as its line (yes green, not all verified orange, no red), the other paragraphs of
+    # the head as its first line, through the blank lines between them; never a row wider than 79 columns
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_report import node
+    kwargs = {"yes": dict(nodes=[node(i, rewritten=["cassandra-env.sh", "jvm-server.options"]) for i in range(1, 4)],
+                          check=True),
+              "not all verified": dict(nodes=[node(1), node(2), node(3, read=False)], ok=False, allow_unread=True),
+              "no": dict(ok=False, strict=False, self_check={"node1": {"differences": ["cassandra.yaml: x: 1 -> 2"]}})}
+    shown = import_head_shown(**kwargs[answer])
+    assert all(len(line) <= 79 for line, dummy in shown), shown
+    at = next(i for i, (line, dummy) in enumerate(shown) if line.startswith("  in sync with Ansible: "))
+    end = next(i for i in range(at + 1, len(shown)) if not shown[i][0].startswith("    "))
+    assert shown[at][0] == "  in sync with Ansible: " + answer and end > at + 1
+    verdict = {"yes": C.COLOR_OK, "not all verified": C.COLOR_CHANGED, "no": C.COLOR_ERROR}[answer]
+    assert set(color for dummy, color in shown[at:end]) == {verdict}, shown
+    title = shown[0][1]
+    assert title == "cyan" and set(color for dummy, color in shown[:at] + shown[end:]) == {title}, shown
+
+
 def test_the_import_s_in_sync_line_by_its_answer():
     # its own colour over the IMPORT line it is under: yes green, not all verified orange, no red (Ansible's colours)
     from ansible import constants as C

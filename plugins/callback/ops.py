@@ -208,11 +208,14 @@ _COLOURS = (
 # a mark anywhere in a line, its own colour over the one of the line it is indented under (the lines indented under
 # it take it in turn): a node down, a stalled peer, a setting that differs, what a node would get or got, what a reset
 # deletes, whether the import is in sync with Ansible
-_MARKS = (
-    # import_cluster's head: in sync with Ansible or not (its next lines, indented under it, the same)
+# - import_cluster's head: in sync with Ansible or not; the rows indented under it take its colour (the other marks
+#   colour their own line only)
+_SYNC_MARKS = (
     (re.compile(r"^  in sync with Ansible: yes\b"), "COLOR_OK"),
     (re.compile(r"^  in sync with Ansible: not all verified\b"), "COLOR_CHANGED"),
     (re.compile(r"^  in sync with Ansible: no\b"), "COLOR_ERROR"),
+)
+_MARKS = _SYNC_MARKS + (
     (re.compile(r"\u2190 down\b|^\s*\S.*?\S  (\w+ )?FAILED\b"), "COLOR_ERROR"),  # (a recap's failed node)
     # a line of the other ends under a progress line (cassandra_output.peer_lines, indented 6) with a stalled one
     (re.compile(r"^ {6}(?:(?:to|from|with) +\S+ +[\d.]+(?: \w+)?/|\d+ peers?: |\+\d+ more: ).*\bSTALLED\b"),
@@ -682,6 +685,7 @@ class CallbackModule(DefaultCallback):
         ruled = headed or recap  # a screen or a recap: rules inside it
         top = texts.index(first) if ruled else None  # its first line
         shades = []  # (indent, colour) of the lines above, each less indented than the next
+        head = headed and first.startswith("IMPORT ")  # import_cluster's head: its paragraphs in its colours
         for i, line in enumerate(texts):
             if ruled and not line:  # a blank line between paragraphs (not "") stays blank
                 self._rule()  # the blocks inside
@@ -690,14 +694,20 @@ class CallbackModule(DefaultCallback):
             heavy = _HEAVY.match(line) if ruled else None
             if heavy:  # a section of the screen: drawn as the heavy rule
                 self._rule(heavy=True, text=heavy.group(1) or "")
-                shades = []
+                shades, head = [], False
+                continue
+            if head and not line.strip():  # a blank line between the head's paragraphs: the colours above go on
+                self._line(line)
                 continue
             shades = _under(shades, line)
             above = shades[-1][1] if shades else None
             hue = self._hue(line, above, color, info, headed and not recap and i == top)
-            # an indented line's own mark: that line only; a FAILED or STOPPED recap: its rows by their own marks
+            # an indented line's own mark: that line only (the import's in sync line: its rows too); a FAILED or
+            # STOPPED recap: its rows by their own marks
             failed = recap and i == top and first.startswith(("FAILED", "STOPPED"))
-            shades.append((_indent(line), None if failed else (above if _indent(line) and not color else hue)))
+            carried = any(pattern.search(line) for pattern, dummy in _SYNC_MARKS)
+            shades.append((_indent(line), None if failed else (
+                above if _indent(line) and not color and not carried else hue)))
             self._line(line, color=hue)
             if headed and i == top and first.startswith("PLAN") and i + 1 < len(texts) and texts[i + 1].strip():
                 self._rule()  # under the plan's first line

@@ -1145,7 +1145,7 @@ def test_report_moved_cleanup_and_next(tmp_path):
     at = lines.index("  Java options the running Java does not use (left out of the lines moved, else left as they are)")
     assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
-    assert "1 hand edit moved" in lines[0]
+    assert lines[1] == "  1 hand edit moved"  # (the head's count, a row of its own)
     after = lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):]
     assert "expected: cassandra-env.sh, jvm17-server.options rewritten, no restart (the same JVM arguments), nothing" \
         " else" in \
