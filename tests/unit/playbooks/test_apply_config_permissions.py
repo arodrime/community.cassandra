@@ -337,8 +337,8 @@ def test_the_nodes_written_at_once_let_down_the_nodes_started_later():
     plays = load("playbooks", "apply_config.yml")
     batch = [p for p in plays if p.get("name") == "Apply the config where nothing is restarted, on these nodes at once"][0]
     assert [t["name"] for t in batch["tasks"]] == ["Give each node its own facts", "Load the cassandra_install defaults",
-                                                   "Apply the config on these nodes"]
-    include = batch["tasks"][2]["vars"]
+                                                   "Say what the run does", "Apply the config on these nodes"]
+    include = batch["tasks"][3]["vars"]
     assert include["cassandra_service_node_batch"] is True and batch["any_errors_fatal"] is True and "serial" not in batch
     then = {"n1": "none", "n2": "start", "n3": "write", "n4": "restart", "n5": "write"}
     hostvars = dict((h, {"_cassandra_preflight": {"ring_address": "10.100.100.%s" % h[1]}}) for h in list(then) + ["n6"])

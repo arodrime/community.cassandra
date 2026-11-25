@@ -508,8 +508,9 @@ def lines(msg):
     return str(msg).split("\n")
 
 
-# A step: a phase line marked cassandra_output_step, until the next phase line, plan, screen, recap, question or
-# play (done then), or until an error, a progress line or the end of a run that failed (its time not said then)
+# A step: a phase line marked cassandra_output_step, until the next phase line, plan, screen, recap or play (done
+# then), or until an error, a progress line or the end of a run that failed (its time not said then); a question
+# (pause) hides its line until the next task
 Step = namedtuple("Step", "phase tint start")
 STEP_WIDTH = 79  # the most of a step's line
 STEP_DRAW_EVERY = 0.2  # seconds between two rewrites of a step's line on a terminal
@@ -535,15 +536,6 @@ def step_done(phase, seconds, width=STEP_WIDTH):
     return [phase, "  " + said]
 
 
-def play_hosts(play):
-    """The names of the hosts a play runs on (its hosts, --limit applied), None when ansible-core does not say."""
-    try:  # the variable manager's inventory: ansible-core's own, no public API gives the play's hosts
-        inventory = play.get_variable_manager()._inventory  # pylint: disable=protected-access
-        return set(host.get_name() for host in inventory.get_hosts(play.hosts, order=play.order))
-    except Exception:  # pylint: disable=broad-except  # counted from the results then
-        return None
-
-
 class CallbackModule(DefaultCallback):
 
     CALLBACK_VERSION = 2.0
@@ -556,7 +548,7 @@ class CallbackModule(DefaultCallback):
     _paused = False  # a question (pause) may be asked: the step's line not drawn until the next task
     _step_said = False  # in a log or a pipe: the step's own line is the last printed
     _drawn = _logged = 0.0  # when the step's line was last drawn on the terminal, last given to the log or the pipe
-    _hosts = None  # the hosts of the play running (None: unknown, those with a result counted)
+    _pid = None  # the controller's process (a worker forked during a step prints as Ansible does)
 
     def __init__(self, *args, **kwargs):
         super(CallbackModule, self).__init__(*args, **kwargs)
@@ -574,8 +566,8 @@ class CallbackModule(DefaultCallback):
         self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
         self._seen, self._gone, self._through = set(), set(), set()  # the play's hosts with a result, out, done
         self._lock = threading.RLock()  # the step's line and Ansible's output (results and warnings: two threads)
+        atexit.register(self._footer_at_exit)  # (run after the one below: atexit runs the last registered first)
         atexit.register(self._say_refused_at_exit)  # (a run that ends before any next task or its stats)
-        atexit.register(self._footer_at_exit)
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         super(CallbackModule, self).set_options(task_keys=task_keys, var_options=var_options, direct=direct)
@@ -687,6 +679,7 @@ class CallbackModule(DefaultCallback):
                 self._step_said = True
                 return
             self._live = None  # a progress block above: left as it is
+            self._display.display(phase, log_only=True)  # (the log file: the step's start, as in a pipe)
             self._hook()
             self._draw(force=True)
 
@@ -716,13 +709,16 @@ class CallbackModule(DefaultCallback):
                 return
             if self._tty or not self._step_said:
                 self._line("")
-            for line in step_done(step.phase, self._clock() - step.start) if done else [step.phase]:
+            if not done:  # on a terminal: its phase line alone (the log file has it already)
+                self._display.display(step.phase, color=step.tint, screen_only=True)
+                self._blank, self._ruled, self._live = False, "", None
+            for line in step_done(step.phase, self._clock() - step.start) if done else []:
                 self._line(line, color=step.tint)
             self._gap, self._step_said = True, False
 
     def _counted(self):
         """(the nodes through the task running, the nodes of the play still in it)."""
-        hosts = (self._hosts if self._hosts is not None else self._seen) - self._gone
+        hosts = self._seen - self._gone  # (a step starts after the play's first task: every host of it has one)
         return len(self._through & hosts), len(hosts)
 
     def _count(self, result, out=False):
@@ -735,7 +731,7 @@ class CallbackModule(DefaultCallback):
             if self._step is None:
                 return
             if _task(result).run_once is True:  # its one result: the task is over for every node
-                self._through = set(self._hosts if self._hosts is not None else self._seen)
+                self._through = set(self._seen)
             else:
                 self._through.add(host)
             through, total = self._counted()
@@ -781,11 +777,13 @@ class CallbackModule(DefaultCallback):
         # Ansible prints through its Display (one per process, the callback's _display): its display method,
         # wrapped on that instance until the step is over (_unhook), as _print_task_banner does for one call.
         # A line printed without its newline (newline=False: a prompt) holds the step's line until the next one.
+        # A worker forked meanwhile has this wrapper too (and the lock as the fork found it): it prints as Ansible does.
         display = self._display
         shown = display.display
+        self._pid = os.getpid()
 
         def over_the_step(msg="", *args, **kwargs):
-            if kwargs.get("log_only", len(args) > 3 and args[3]):
+            if os.getpid() != self._pid or kwargs.get("log_only", len(args) > 3 and args[3]):
                 return shown(msg, *args, **kwargs)
             with self._lock:
                 self._clear()
@@ -809,10 +807,11 @@ class CallbackModule(DefaultCallback):
             self._display.display = hooked.own
 
     def _footer_at_exit(self):
-        """At the exit of the process, a step's line still drawn kept as it is, the shell's prompt under it."""
-        try:
+        """At the exit of the process (an interrupted run, a crash), a step's line still drawn cleared: the last
+        line is Ansible's own (its error), never a step that looks still going on."""
+        try:  # (no lock: a thread that held it is gone at exit)
             if self._footer is not None:
-                sys.stdout.write("\n")
+                sys.stdout.write("\r\x1b[K" + ("\x1b[1A" if self._footer else ""))
                 sys.stdout.flush()
                 self._footer = None
         except (IOError, OSError, ValueError):
@@ -1198,7 +1197,6 @@ class CallbackModule(DefaultCallback):
     def v2_playbook_on_play_start(self, play):
         self._say_refused()
         self._step_end(done=True)  # (its play is over)
-        self._hosts = play_hosts(play)
         self._seen, self._gone, self._through = set(), set(), set()
         self._verdicts = set()  # a verdict said again by another play is its own
         if self._verbose():

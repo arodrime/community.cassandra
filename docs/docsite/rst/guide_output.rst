@@ -72,12 +72,15 @@ Conventions
   ``community.cassandra.cassandra_phase``); ``--check`` says the reading phases only. A restart or a reboot has no
   phase line: its wait line says it.
 - **Steps** (apply_config): a phase line whose task also sets ``cassandra_output_step: true`` is a step of the
-  run, until the next phase line, plan, screen, recap, question or play. Under the ops callback, on a terminal, its
-  line stays under the output while it goes on, with the nodes through the task running out of the play's nodes
+  run, until the next phase line, plan, screen, recap or play (a question hides its line until the next task).
+  Under the ops callback, on a terminal, its line stays under the output while it goes on, with the nodes through
+  the task running out of the play's nodes
   and the time since it started, rewritten in place (``Comparing the config with the inventory (24 nodes)...
   4/24  1m12s``: the play runs each task on every node before the next one, so the count goes up to 24 at each
   task); once over, ``...  done in 4m12s``. A message printed meanwhile goes above that line. In a log or a pipe:
-  the phase line when it starts, a line with the count every 5 minutes, ``...  done in 4m12s`` once over. A step
+  the phase line when it starts, a line with the count at a result after 5 minutes or more since the last one,
+  ``...  done in 4m12s`` once over (a ``log_path`` file the same, without the count lines). The count and the time
+  move at each result: a long task with no result yet leaves them as they are. A step
   stopped by an error or a progress line says no time (its phase line alone, as without a step). apply_config's
   steps: ``Checking the cluster (24 nodes)...``, ``Comparing the config with the inventory (24 nodes)...``, under
   ``--check`` ``Checking the cluster from each node (24 nodes)...``; in a real run, after the question,

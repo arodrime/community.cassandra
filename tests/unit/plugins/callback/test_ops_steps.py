@@ -46,10 +46,11 @@ class Result(object):
 class TerminalDisplay(FakeDisplay):
     """A fake display that also prints on the terminal (sys.stdout) what it does not give to the log only."""
 
-    def display(self, line, color=None, log_only=False, screen_only=False):
+    def display(self, line, color=None, stderr=False, screen_only=False, log_only=False, newline=True):
+        """(Ansible's Display.display arguments, in its order)"""
         FakeDisplay.display(self, line, color, log_only, screen_only)
         if not log_only:
-            sys.stdout.write(line + "\n")
+            sys.stdout.write(line + ("\n" if newline else ""))
 
 
 def step_callback(tty, hosts=("node1", "node2", "node3")):
@@ -58,7 +59,7 @@ def step_callback(tty, hosts=("node1", "node2", "node3")):
     callback = quiet_callback(tty)
     callback._display = TerminalDisplay() if tty else callback._display
     callback._seen, callback._gone, callback._through, callback._refused = set(), set(), set(), {}
-    callback._lock, callback._hosts = threading.RLock(), set(hosts)
+    callback._lock, callback._seen = threading.RLock(), set(hosts)  # (the play's first task: every host)
     callback._display.verbosity = 0
     return callback
 
@@ -132,10 +133,10 @@ def test_a_step_on_a_terminal_rewritten_in_place_the_messages_above_it():
         "WARNING  something", "         its way out", "", PHASE + "  done in 4m12s", "",
         "Checking the cluster from each node (3 nodes)...", ""]
     assert "display" not in callback._display.__dict__  # Ansible's display as it was
-    # the log file (log_path) gets the lines printed, not the step's line going on
+    # the log file (log_path) gets the lines printed and the step's start, not its line going on
     assert [line for line, color, log_only in callback._display.shown if line.strip()] == [
-        "WARNING  something", "         its way out", PHASE + "  done in 4m12s", "Checking the cluster from each node (3 nodes)..."]
-    assert [color for line, color, log_only in callback._display.shown if line.startswith(PHASE)] == ["cyan"]
+        PHASE, "WARNING  something", "         its way out", PHASE + "  done in 4m12s", "Checking the cluster from each node (3 nodes)..."]
+    assert [color for line, color, log_only in callback._display.shown if line.startswith(PHASE + "  ")] == ["cyan"]
 
 
 def test_a_step_on_a_terminal_ansible_own_lines_above_it():
@@ -203,8 +204,6 @@ def test_the_nodes_counted():
     callback._count(Result("node2"), out=True)  # failed or unreachable: the play goes on without it
     callback._count(Result("node1"))
     assert callback._counted() == (1, 2)
-    callback._hosts = None  # ansible-core did not say the play's hosts: those with a result
-    assert callback._counted() == (1, 2)
 
 
 def test_a_step_ends_with_its_play_or_its_run():
@@ -217,7 +216,7 @@ def test_a_step_ends_with_its_play_or_its_run():
         def get_variable_manager(self):
             raise AttributeError("no inventory")
     callback.v2_playbook_on_play_start(Play())
-    assert callback._step is None and callback._hosts is None
+    assert callback._step is None and callback._seen == set()
     assert callback._display.shown[-1][0] == PHASE + "  done in 0s"
 
     class Stats(object):
@@ -352,9 +351,35 @@ def test_a_step_on_a_terminal(tmp_path):
     assert re.search(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  \d/2  \ds", raw), raw  # going on
     rows = [row for row in screen(raw) if row.strip() and not row.startswith("====")]
     done = [row for row in rows if row.startswith("Comparing")]
-    assert len(done) == 1 and re.match(r"Comparing .*\.\.\.  done in \ds$", done[0]), rows
+    assert len(done) == 1 and re.match(r"Comparing .*\.\.\.  done in \d+s$", done[0]), rows
     assert rows.index(done[0]) == len(rows) - 2 and rows[-1].startswith("CHECK  "), rows
     assert not any(re.search(r"\d/2  \ds", row) for row in rows), rows  # nothing left of the lines going on
     with open(str(tmp_path / "run.log"), encoding="utf-8") as f:
         log = f.read()
-    assert re.search(r"Comparing .*\.\.\.  done in \ds", log) and not re.search(r"\d/2  \ds", log), log
+    assert re.search(r"Comparing .*\.\.\.  done in \d+s", log) and not re.search(r"\d/2  \ds", log), log
+
+
+def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():
+    """A line Ansible leaves open (no newline: a prompt) holds the step's line; a worker forked during the step
+    prints as Ansible does (never the step's line, never its lock); at the exit the step's line is cleared; the
+    log file gets the step's start."""
+    callback = step_callback(tty=True)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        assert callback._display.shown[-1] == (PHASE, None, True)  # the log file: its start
+        callback._display.display("Answer: ", None, False, False, False, False)  # (positional, as Display's)
+        through(callback, "node1", "node2", "node3")
+        assert out.getvalue().endswith("Answer: ")  # nothing drawn after it
+        callback._display.display("yes")
+        assert screen(out.getvalue())[-1] == PHASE + "  3/3  0s"
+        callback._pid = -1  # as in a forked worker
+        before = out.getvalue()
+        callback._display.display("a worker's line")
+        assert out.getvalue() == before + "a worker's line\n"
+        callback._pid = os.getpid()
+        callback._footer_at_exit()
+    finally:
+        sys.stdout = real
+    assert screen(out.getvalue())[-1] == "" and not any(r.endswith("0s") for r in screen(out.getvalue()))
