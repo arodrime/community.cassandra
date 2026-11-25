@@ -1153,6 +1153,27 @@ categories, each shown in the plan and under ``--check``. Every variable of the 
 
 Options of the runs (``cassandra_rolling_resume``, the logins of nodetool and cqlsh...) are not node settings.
 
+The compare of ``cassandra_config`` is split in two: its plan (``tasks/plan.yml``: what it reads on the node,
+compares and lists, nothing written) and the rest (``tasks/apply_plan.yml``: what it says, asks and writes, only what
+the plan lists). ``apply_config`` runs the plan on every node, and the rest only where the plan lists something to
+write: elsewhere the rest would say nothing and leave the plan's facts as they are, so it is not run (the screens are
+the same; the report says it in its ``COMPARE`` section: how many nodes the plan found unchanged, how many the role
+compared). The Prometheus exporter on is always compared by the rest. ``-e apply_full=true`` runs the rest on every
+node, as before; it is a fallback while the roles are split into a plan and the rest, meant to go once they all are
+and proven. ``-e apply_verify=true`` (tests, support) runs the rest on every node too, then stops on a node the plan
+found unchanged whose facts the rest changed, naming them.
+
+``-e apply_only=<parts>`` (e.g. ``apply_only=config`` or ``apply_only=config,linux``) compares and applies only
+those parts: ``config`` (the config files, the JMX users' files, the Prometheus exporter), ``unit`` (the
+``cassandra`` unit), ``java``, ``linux`` (the OS settings), ``install`` (the packages and tools, a newer release of
+the series), ``repository``, ``medusa``, ``firewall``, ``axonops``. ``config`` and ``unit`` are always compared: the
+restart decision reads them (the files changed since Cassandra started; the unit is written at every restart). The
+plan and the recap say the parts left out (``WARNING  not checked (apply_only): linux, install, ...``), and so does
+the report. A name that is not a part stops the run before any change, with the list of the parts. A part left out
+that a node needs stops it too: a newer release of its series to install (``install``), the AxonOps agent its
+``cassandra-env.sh`` loads (``axonops``). The running Cassandra is read all the same with ``java`` left out (what its
+unit gave it, a restart pending).
+
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:
 false`` (its OS settings kept as they are, e.g. set by ``import_cluster``). The ones that differ come after the config's,

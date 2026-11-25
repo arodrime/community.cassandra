@@ -178,7 +178,9 @@ OPERATIONS = [
                 " a file lacks it: no restart for them. A node's Java, a newer release of its series and what its unit"
                 " gives Cassandra are done in its one restart; another series (upgrade), a node to add or remove"
                 " (topology) stop the run before any change, with the command.",
-     "options": [RESUME, ("-e cassandra_allow_unknown_patch=true", "a release past the patch notes", "false")],
+     "options": [RESUME, ("-e cassandra_allow_unknown_patch=true", "a release past the patch notes", "false"),
+                 ("-e apply_only=config,linux", "only these parts, config always", "all parts"),
+                 ("-e apply_full=true", "the whole config compare everywhere", "false")],
      "example": ("the settings that differ, changing nothing", ["--check"])},
     {"name": "change_seeds", "theme": "cluster", "guide": "Changing the seeds",
      "summary": "Applies a new cassandra_seeds list to every node, live (no restart); topology, add_node and"

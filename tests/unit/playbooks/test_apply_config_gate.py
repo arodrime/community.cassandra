@@ -1,0 +1,352 @@
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+# apply_config's compare of cassandra_config: the role's plan (tasks/plan.yml) on every node, the rest of the role
+# (tasks/apply_plan.yml) only where the plan lists something it would write (_cassandra_config_plan_writes). The
+# guards of that skip: every task of the rest that writes is covered by an item of the plan's list (or never writes
+# in the compare); every message and stop of the rest is said only when the plan lists something (or never in the
+# compare); every fact of the rest the run reads is set by the gate as the rest leaves it, or checked by
+# apply_verify. A task added to the rest fails here until it is classified.
+
+import glob
+import os
+import re
+
+import pytest
+import yaml
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_gate import (
+    PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops)
+from ansible_collections.community.cassandra.tests.unit.helpers import TOP, render
+from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
+
+TASKS = os.path.join(TOP, "roles", "cassandra_config", "tasks")
+PLAN = load_tasks(os.path.join(TASKS, "plan.yml"))
+REST = load_tasks(os.path.join(TASKS, "apply_plan.yml"))
+with open(os.path.join(TOP, "playbooks", "apply_config.yml"), encoding="utf-8") as f:
+    PLAYBOOK = yaml.safe_load(f)
+COMPARE = find_task(find_play(PLAYBOOK, "Find what each node needs"), "Compare the config")
+VERDICT = find_task(PLAN, "Note what the rest of the role would write")
+ITEMS = list(VERDICT["vars"]["_found"])
+
+WRITERS = ("ansible.builtin.template", "ansible.builtin.copy", "ansible.builtin.file", "ansible.builtin.lineinfile",
+           "ansible.builtin.get_url", "ansible.builtin.command", "ansible.builtin.shell", "ansible.builtin.include_role",
+           "community.general.alternatives", "community.cassandra.cassandra_reload")
+# what the compare does not run, or what changes nothing in it
+NEVER = {
+    "check mode": "skipped in check mode (a command, a write the module does not do), or when not ansible_check_mode",
+    "read": "a read: changed_when false",
+    "no fact": "acted on by no fact of the run: apply_config does not plan it (the cqlsh and nodetool files)",
+}
+# every task of the rest that may write: the item of the plan's list that covers it, or why it never writes in
+# the compare
+WRITES = {
+    "Look for the AxonOps Java agent's options file": "read",
+    "Record the ones not written since it started": "check mode",
+    "Seed the alternative conf dir from the one in use": "files",  # (a conf dir that moves: every file written)
+    "Select the alternative conf dir": "files",
+    "Template Cassandra config files": "files",
+    "Set the owner and mode of the files left as they are": "owner, group, mode",
+    "Add the role's header line to the files left as they are": "header",
+    "Record them with their header as the files the running Cassandra runs with": "header",
+    "Find the running Cassandra JVM": "read",
+    "Create the parents of the missing ones": "directories",
+    "Create the missing ones": "directories",
+    "Set the owner and mode of the existing ones": "directories",
+    "Reload the seed list on the running node": "files",
+    "Find what the exporter's agent no longer needs": "read",
+    "Remove them": "exporter",
+    "Forget the jars removed": "exporter",
+    "Remove the exporter's directory once empty": "exporter",
+    "Create the directories of the JMX files": "JMX files",
+    "Create the directory of the JMX password file": "JMX files",
+    "Write jmxremote.password": "JMX files",
+    "Write jmxremote.access": "JMX files",
+    "Set the owner and mode of the JMX files left as they are": "JMX files",
+    "Create ~/.cassandra": "no fact",
+    "Write ~/.cassandra/cqlshrc": "no fact",
+    "Write ~/.cassandra/credentials (4.1+)": "no fact",
+    "Create their ~/.cassandra": "no fact",
+    "Write their ~/.cassandra/nodetool-ssl.properties": "no fact",
+    "Report": "check mode",  # (cassandra_change_report: its file only with cassandra_change_report_dir, "" here)
+}
+# every message, question and stop of the rest: the item it needs, or why the compare never says it
+SAID = {
+    "Warn that the audit events would move to audit.log": "files",  # (logback.xml among the changes)
+    "Warn that a file kept by hand is missing": "quiet",
+    "Show the config changes": "quiet",
+    "Show the config changes to confirm": "check mode",
+    "Say which files are left as they are": "no operator message",
+    "Say which files are kept as they are (cassandra_config_keep_files)": "no operator message",
+    "Show the owner, group and mode changes": "quiet",
+    "Confirm config changes": "check mode",
+    "Stop unless the changes were confirmed": "check mode",
+    "Refuse to load an AxonOps Java agent not installed": "check mode",  # (its look is a command: skipped)
+    "Say the change cannot be told pending": "check mode",
+    "Say the files the header was not added to": "header",
+    "Say the seed reload failed": "files",
+    "Warn that a restart is needed": "quiet",
+    "Say what the exporter's agent in a file still needs is left in place": "exporter",
+    "Say which JMX files are kept as they are (cassandra_config_keep_files)": "no operator message",
+    "Report": "quiet",  # (cassandra_change_report: its "Show changes")
+    "Record them with their header as the files the running Cassandra runs with": "header",
+}
+SILENT = {"quiet": "said by apply_config itself (_cassandra_config_quiet, _cassandra_change_report_quiet, no restart warning)",
+          "no operator message": "no cassandra_output: the ops callback does not print it",
+          "check mode": "not under check mode"}
+
+
+def walk(tasks, exporter=False):
+    """(task, under the exporter's own tasks) of a task list, blocks and static includes opened."""
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        inner = [t for key in ("block", "rescue", "always") for t in task.get(key) or []]
+        under = exporter or task.get("name") == "The Prometheus exporter's jar and config"
+        if inner:
+            yield from walk(inner, under)
+        else:
+            yield task, under
+
+
+def module(task):
+    return next((k for k in task if k.startswith(("ansible.builtin.", "community."))), "")
+
+
+def test_every_task_of_the_rest_that_writes_is_covered_by_the_plan():
+    found = {}
+    for task, exporter in walk(REST):
+        if module(task) not in WRITERS or exporter:  # (the exporter on: the rest runs, "exporter")
+            continue
+        if module(task) in ("ansible.builtin.command", "ansible.builtin.shell") and task.get("changed_when") is False:
+            found[task["name"]] = "read"
+            continue
+        found[task["name"]] = WRITES.get(task["name"], "NOT CLASSIFIED")
+    assert sorted(n for n, item in found.items() if item == "NOT CLASSIFIED") == []
+    assert set(found.values()) <= set(ITEMS) | set(NEVER)
+    assert sorted(set(WRITES) - set(found)) == []  # (a task gone: its line too)
+
+
+def test_every_message_and_stop_of_the_rest_needs_an_item_of_the_plan():
+    found = {}
+    for task, exporter in walk(REST):
+        if exporter or module(task) not in ("ansible.builtin.debug", "ansible.builtin.assert", "ansible.builtin.fail",
+                                            "ansible.builtin.pause", "ansible.builtin.include_role"):
+            continue
+        found[task["name"]] = SAID.get(task["name"], "NOT CLASSIFIED")
+    assert sorted(n for n, item in found.items() if item == "NOT CLASSIFIED") == []
+    assert set(found.values()) <= set(ITEMS) | set(SILENT)
+    assert sorted(set(SAID) - set(found)) == []
+    # (the ones said by apply_config itself are so because of its vars)
+    vars_ = COMPARE["vars"]
+    assert vars_["_cassandra_config_quiet"] is True and vars_["_cassandra_change_report_quiet"] is True
+    assert vars_["_cassandra_config_no_restart_warning"] is True
+
+
+def sets(tasks):
+    out = set()
+    for task, dummy in walk(tasks):
+        out |= set(k for k in task.get("ansible.builtin.set_fact") or {} if k != "cacheable")
+        out |= {task["register"]} if "register" in task else set()
+        role = task.get("ansible.builtin.include_role")
+        if role and not role["name"].endswith(".cassandra_config"):
+            path = os.path.join(TOP, "roles", role["name"].split(".")[-1], "tasks", role.get("tasks_from", "main.yml"))
+            out |= sets(load_tasks(path))
+    return out
+
+
+def read_by_the_run():
+    """The names the playbook, the operation's tasks and the filters may read (a superset)."""
+    words = set()
+    for path in (glob.glob(os.path.join(TOP, "playbooks", "apply_config.yml"))
+                 + glob.glob(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "*.yml"))
+                 + glob.glob(os.path.join(TOP, "plugins", "filter", "*.py"))
+                 + glob.glob(os.path.join(TOP, "plugins", "plugin_utils", "*.py"))):
+        with open(path, encoding="utf-8") as f:
+            words |= set(re.findall(r"\b_?cassandra_[a-z0-9_]+\b", f.read()))
+    return words
+
+
+# facts of the rest only the exporter's own tasks set: the rest runs whenever the exporter is on
+EXPORTER_FACTS = {"_cassandra_config_exporter_jar_state", "cassandra_config_exporter_download"}
+
+
+def test_every_fact_of_the_rest_the_run_reads_is_set_by_the_gate_or_checked():
+    rest, plan, read = sets(REST), sets(PLAN), read_by_the_run()
+    gate = find_task(COMPARE, "Note what the rest of the config role leaves on a node it would not change")
+    gate_sets = set(gate["ansible.builtin.set_fact"])
+    checked = set(COMPARE["vars"]["_gate_facts"])
+    # set by the rest only: the gate sets them (as the rest leaves them: _sums' own values)
+    assert ((rest - plan) & read) - EXPORTER_FACTS <= gate_sets <= rest
+    # set by both, or by the gate: apply_verify checks them
+    assert ((rest & plan) & read) | gate_sets == checked
+    assert set(COMPARE["vars"]["_gate_values"]) == gate_sets
+
+
+def test_the_gate_sets_what_the_rest_leaves():
+    gate = find_task(COMPARE, "Note what the rest of the config role leaves on a node it would not change")
+    facts = gate["ansible.builtin.set_fact"]
+    assert facts["_cassandra_config_items"] == [] and facts["_cassandra_config_exporter_changes"] == []
+    seen = render(COMPARE["vars"]["_seen_config"], _cassandra_change_report_seen={"cassandra_linux": {"items": []}})
+    assert seen == {"cassandra_linux": {"items": []}, "cassandra_config": {"items": [], "state": {}}}
+    # (the change report's own fact, rendered with no item: the same)
+    report = find_task(load_tasks(os.path.join(TOP, "roles", "cassandra_change_report", "tasks", "main.yml")),
+                       "Keep what changed ({{ cassandra_change_report_role }})")
+    said = render(report["ansible.builtin.set_fact"]["_cassandra_change_report_seen"], cassandra_change_report_role="cassandra_config",
+                  cassandra_change_report_items=[], _cassandra_change_report_seen={"cassandra_linux": {"items": []}})
+    assert said == seen
+    # the role's own items when its plan lists nothing: none
+    record = find_task(REST, "Record the changes for the report")
+    items = render(record["ansible.builtin.set_fact"]["_cassandra_config_items"], **dict(
+        record["vars"], cassandra_rpm_conf_alternative="", cassandra_config_conf_target={"skipped": True},
+        cassandra_config_preview={"results": [{"cassandra_config_file": "cassandra.yaml", "stdout": "", "rc": 0}]},
+        _cassandra_config_kept=[], _cassandra_config_perm_changes=[], _cassandra_config_dir_changes=[],
+        _cassandra_config_header=[], _cassandra_config_header_items=[], cassandra_conf_dir="/etc/cassandra"))
+    assert items == []
+
+
+UNCHANGED = {
+    "cassandra_config_pkg_conf": {"stat": {"exists": True}}, "_cassandra_config_changes": [], "_cassandra_config_write": [],
+    "_cassandra_config_kept": [], "_cassandra_config_perm_changes": [], "_cassandra_config_dir_changes": [],
+    "cassandra_config_dirs": {"results": [{"item": "/var/lib/cassandra", "stat": {"exists": True}}]},
+    "_cassandra_config_header": [], "cassandra_jmx_users": [], "cassandra_prometheus_exporter_enabled": False,
+    "cassandra_config_exporter_unused": {"stdout_lines": []},
+}
+
+
+def verdict(**changed):
+    variables = dict(UNCHANGED, **changed)
+    found = dict((k, render(v, **variables)) for k, v in VERDICT["vars"]["_found"].items())
+    return render(VERDICT["ansible.builtin.set_fact"]["_cassandra_config_plan_writes"], _found=found)
+
+
+@pytest.mark.parametrize("changed, said", [
+    ({}, []),
+    ({"cassandra_config_pkg_conf": {"stat": {"exists": False}}}, ["not installed"]),
+    ({"_cassandra_config_changes": ["cassandra.yaml"]}, ["files"]),
+    ({"_cassandra_config_write": ["cassandra.yaml"]}, ["files"]),  # (a link, a conf dir that moves, a diff that failed)
+    ({"_cassandra_config_write": ["cassandra.yaml"], "_cassandra_config_kept": ["cassandra.yaml"]}, []),
+    ({"_cassandra_config_perm_changes": [{"item": "x"}]}, ["owner, group, mode"]),
+    ({"_cassandra_config_dir_changes": [{"item": "/d"}]}, ["directories"]),
+    ({"cassandra_config_dirs": {"results": [{"item": "/d", "stat": {"exists": False}}]}}, ["directories"]),
+    ({"_cassandra_config_header": [{"file": "cassandra.yaml"}]}, ["header"]),
+    ({"cassandra_jmx_users": [{"name": "ops"}]}, ["JMX files"]),  # (not compared: a node blank)
+    ({"cassandra_jmx_users": [{"name": "ops"}], "cassandra_config_jmx_same": {"stdout": '["password", "access"]'},
+      "_cassandra_config_jmx_changes": []}, []),
+    ({"cassandra_jmx_users": [{"name": "ops"}], "cassandra_config_jmx_same": {"stdout": '["password"]'},
+      "_cassandra_config_jmx_changes": [{"file": "jmxremote.access"}]}, ["JMX files"]),
+    ({"cassandra_jmx_users": [{"name": "ops"}], "cassandra_config_jmx_same": {"stdout": '["password", "access"]'},
+      "_cassandra_config_jmx_changes": [], "cassandra_config_jmx_header": {"stdout": '[{"file": "jmxremote.access"}]'}},
+     ["JMX files"]),
+    ({"cassandra_prometheus_exporter_enabled": True}, ["exporter"]),
+    ({"cassandra_config_exporter_unused": {"skipped": True}}, ["exporter"]),  # (a run that writes: read later)
+    ({"cassandra_config_exporter_unused": {"stdout_lines": ["kept|cassandra-env.sh|conf"]}}, ["exporter"]),
+])
+def test_the_plan_lists_what_the_rest_would_write(changed, said):
+    assert verdict(**changed) == said
+
+
+def test_the_plan_reads_the_exporter_only_in_a_run_that_looks():
+    tell = find_task(PLAN, "Tell a run that writes from one that only looks")
+    assert tell["ansible.builtin.command"] == "true" and tell["register"] == "_cassandra_config_exporter_writes"
+    plan_find = find_task(PLAN, "Find what the exporter's agent no longer needs (a run that only looks)")
+    assert plan_find["when"] == "_cassandra_config_exporter_writes is skipped"
+    rest_find = find_task(REST, "Find what the exporter's agent no longer needs (a run that writes)")
+    assert rest_find["when"] == "_cassandra_config_exporter_writes is not skipped"
+    assert plan_find["ansible.builtin.include_tasks"] == rest_find["ansible.builtin.include_tasks"]
+
+
+def test_main_runs_the_plan_then_the_rest():
+    with open(os.path.join(TASKS, "main.yml"), encoding="utf-8") as f:
+        main = yaml.safe_load(f)
+    assert [t["ansible.builtin.import_tasks"] for t in main] == ["plan.yml", "apply_plan.yml"]
+
+
+def test_the_compare_runs_the_rest_where_the_plan_lists_something():
+    plan, rest = (find_task(COMPARE, n) for n in ("Work out what the config role would change",
+                                                  "Compare the config with the rest of the role"))
+    assert plan["ansible.builtin.include_role"]["tasks_from"] == "plan.yml" and "when" not in plan
+    assert rest["ansible.builtin.include_role"]["tasks_from"] == "apply_plan.yml" and rest["when"] == "_rest | bool"
+    for task in (plan, rest):
+        assert task["ansible.builtin.include_role"]["apply"] == {"check_mode": True}
+    for full, verify, writes, runs in [(False, False, [], False), (False, False, ["files"], True),
+                                       (True, False, [], True), (False, True, [], True)]:
+        assert render(COMPARE["vars"]["_rest"], _cassandra_apply_full=full, _cassandra_apply_verify=verify,
+                      _cassandra_config_plan_writes=writes) is runs
+
+
+def test_the_other_compares_follow_apply_only():
+    play = find_play(PLAYBOOK, "Find what each node needs")
+    assert "'linux' in _cassandra_apply_parts.parts" in str(find_task(play, "Compare the OS settings")["when"])
+    assert "'medusa' in _cassandra_apply_parts.parts" in find_task(play, "Compare Medusa")["when"]
+    assert "'java' in _cassandra_apply_parts.parts" in find_task(play, "Work out the Java of the nodes running another one")["when"]
+    # (java left out: the running JVM read all the same, the unit's read and the restart pending need it)
+    jvm = find_task(play, "Find the running Cassandra")
+    assert jvm["when"] == "'java' not in _cassandra_apply_parts.parts"
+    task = find_task(play, "Compare the repository, the packages and the firewall")
+
+    def roles(given, **variables):
+        return render(task["loop"], _roles=render(task["vars"]["_roles"], **variables),
+                      _cassandra_apply_parts=cassandra_apply_only(given))
+    assert roles("config,install,axonops", cassandra_manage_firewall=True, cassandra_axonops_enabled=True) == [
+        "cassandra_install", "cassandra_axonops"]
+    assert roles("", cassandra_manage_firewall=True, cassandra_axonops_enabled=False) == [
+        "cassandra_repository", "cassandra_install", "cassandra_firewall"]
+    # the unit and the config: always
+    assert "when" not in COMPARE
+    assert "apply_parts" not in str(find_task(play, "Compare the cassandra unit").get("when"))
+
+
+@pytest.mark.parametrize("given, parts, left_out", [
+    ("", list(PARTS), []),
+    (None, list(PARTS), []),
+    ("config", ["config", "unit"], ["java", "linux", "install", "repository", "medusa", "firewall", "axonops"]),
+    ("config, linux", ["config", "unit", "linux"], ["java", "install", "repository", "medusa", "firewall", "axonops"]),
+    (["linux", "config", "unit"], ["config", "unit", "linux"], ["java", "install", "repository", "medusa", "firewall",
+                                                               "axonops"]),
+])
+def test_apply_only_gives_the_parts(given, parts, left_out):
+    said = cassandra_apply_only(given)
+    assert said == {"parts": parts, "left_out": left_out, "refused": []}
+
+
+def test_apply_only_refuses_an_unknown_part_or_no_config():
+    said = cassandra_apply_only("config,linus")["refused"]
+    assert said[0] == "apply_only: linus: not a part of apply_config"
+    assert said[1] == "its parts: " + ", ".join(PARTS)
+    assert said[2] == "WAY OUT  -e apply_only=config"
+    said = cassandra_apply_only("linux")["refused"]
+    assert said[0] == "apply_only: linux: config is not among them"
+    assert said[-1] == "WAY OUT  -e apply_only=config,linux"
+    assert all(len(line) <= 77 for line in said)  # (indented 2 in the refusal)
+
+
+def test_apply_only_refuses_to_leave_out_what_a_node_needs():
+    hostvars = {"n1": {"cassandra_apply_config_version": {"kind": "release"}},
+                "n2": {"cassandra_apply_config_version": {"kind": ""}, "cassandra_axonops_enabled": True},
+                "n3": {"cassandra_axonops_enabled": "false"}}
+    assert cassandra_apply_only_stops(list(hostvars), hostvars, list(PARTS)) == []
+    said = cassandra_apply_only_stops(list(hostvars), hostvars, ["config", "unit"])
+    assert said == ["n1: a newer release of its series to install: apply_only leaves install out",
+                    "WAY OUT  add install to apply_only, or run without apply_only",
+                    "n2: cassandra-env.sh loads the AxonOps agent: apply_only leaves axonops out",
+                    "WAY OUT  add axonops to apply_only, or run without apply_only"]
+
+
+def test_the_report_says_the_compare_in_one_line():
+    gates = ["unchanged", "unchanged", "role", ""]
+    assert cassandra_apply_gate_lines(gates) == ["config: 2 of 3 nodes found unchanged by its plan, 1 compared by the role"]
+    assert cassandra_apply_gate_lines(gates, full=True) == ["config: every node compared by the role (apply_full)"]
+    assert cassandra_apply_gate_lines(gates, ["linux", "install"])[1] == "not checked (apply_only): linux, install"
+    assert cassandra_apply_gate_lines([]) == []
+    lines = cassandra_apply_gate_lines(["unchanged"] * 300, list(PARTS[2:]))
+    assert all(len(line) <= 79 for line in lines)
+
+
+def test_the_parts_left_out_are_said_in_the_plan():
+    play = find_play(PLAYBOOK, "Find what each node needs")
+    note = find_task(play, "Say the parts left out")
+    assert note["ansible.builtin.include_role"]["tasks_from"] == "note.yml"
+    assert note["vars"]["_cassandra_notes_in_plan"] is True
+    assert render(note["vars"]["_note"], _cassandra_apply_parts=cassandra_apply_only("config")) == (
+        "WARNING  not checked (apply_only): java, linux, install, repository, medusa, firewall, axonops")

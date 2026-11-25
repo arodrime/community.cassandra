@@ -144,7 +144,7 @@ def test_operation_variables_are_the_playbooks_own():
         args = [o[0] for o in op.get("options") or []] + list((op.get("example") or ("", []))[1])
         for arg in args:
             if arg != "--check":
-                name = re.search(r"(?:cassandra|help|import|status|drift)_\w+", arg).group(0)
+                name = re.search(r"(?:cassandra|help|import|status|drift|apply)_\w+", arg).group(0)
                 assert reads(op["name"], name), (op["name"], name)
 
 

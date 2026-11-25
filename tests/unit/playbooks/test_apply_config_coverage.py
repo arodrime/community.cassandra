@@ -148,9 +148,13 @@ def test_the_plan_compares_them_in_check_mode_before_the_needs():
     assert extras["loop_control"]["loop_var"] in extras["ansible.builtin.include_role"]["name"]
     # the firewall as create_cluster and add_node run it: only with cassandra_manage_firewall (else a cluster they
     # made got firewalld installed, started and its ports opened by the next apply_config)
-    assert render(extras["loop"], {}) == ["cassandra_repository", "cassandra_install"]
-    assert render(extras["loop"], {"cassandra_manage_firewall": False}) == ["cassandra_repository", "cassandra_install"]
-    assert render(extras["loop"], {"cassandra_manage_firewall": True})[-1] == "cassandra_firewall"
+    every = {"_cassandra_apply_parts": {"parts": ["repository", "install", "firewall", "axonops"]}}  # (apply_only)
+
+    def loop(variables):
+        return render(extras["loop"], dict(every, _roles=render(extras["vars"]["_roles"], variables)))
+    assert loop({}) == ["cassandra_repository", "cassandra_install"]
+    assert loop({"cassandra_manage_firewall": False}) == ["cassandra_repository", "cassandra_install"]
+    assert loop({"cassandra_manage_firewall": True})[-1] == "cassandra_firewall"
     java = find(FIND["tasks"], "Work out the Java of the nodes running another one")
     assert java["ansible.builtin.include_role"]["tasks_from"] == "java_plan.yml"
     assert java["vars"]["_cassandra_java_plan_run"] == "apply_config" and java["vars"]["_cassandra_java_plan_running_only"]

@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2051  # +7: cassandra_config split into its plan (plan.yml) and the rest (apply_plan.yml)
+TASKS_MAX = 2062  # +11: apply_config's compare: cassandra_config's rest only where its plan lists a write; apply_only
 # +4 (rc3b): apply_config writes the files' diffs next to its report
 
 

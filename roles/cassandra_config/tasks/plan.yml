@@ -54,8 +54,10 @@
     - name: List what to change
       ansible.builtin.import_tasks: changes.yml
 
-    - name: Compare the JMX users' files
-      ansible.builtin.import_tasks: access_plan.yml
+    # (included only with JMX users: a task skipped costs each node a build of its variables)
+    - name: The JMX users' files
+      ansible.builtin.include_tasks: access_plan.yml
+      when: cassandra_jmx_users | length > 0
 
     # Skipped in check mode (--check, or check_mode applied to the role, as apply_config's preview does): this run
     # only looks, else it writes the files
@@ -69,3 +71,30 @@
       ansible.builtin.include_tasks: prometheus_exporter_find.yml
       when: _cassandra_config_exporter_writes is skipped
 
+# What the rest of the role (apply_plan.yml) would write or say on this node, by what the plan found ([] nothing:
+# it would leave the facts the plan set as they are, _cassandra_config_items and _cassandra_config_exporter_changes
+# empty, and say nothing). apply_config's compare runs the rest only where it is not empty. "exporter": the
+# Prometheus exporter on (its files compared by the rest), or its files no longer needed not read by the plan (a
+# run that writes reads them once the JVM options file is written)
+- name: Note what the rest of the role would write
+  ansible.builtin.set_fact:
+    _cassandra_config_plan_writes: "{{ _found | dict2items | selectattr('value') | map(attribute='key') | list }}"
+  vars:
+    _found:
+      not installed: "{{ not cassandra_config_pkg_conf.stat.exists }}"
+      files: >-
+        {{ (_cassandra_config_changes | default([])
+            + _cassandra_config_write | default([]) | reject('in', _cassandra_config_kept | default([])) | list) | length > 0 }}
+      owner, group, mode: "{{ _cassandra_config_perm_changes | default([]) | length > 0 }}"
+      directories: >-
+        {{ (_cassandra_config_dir_changes | default([])
+            + cassandra_config_dirs.results | default([]) | rejectattr('stat.exists') | list) | length > 0 }}
+      header: "{{ _cassandra_config_header | default([]) | length > 0 }}"
+      # (a node not blank compares both files with the users: written only when missing or other)
+      JMX files: >-
+        {{ cassandra_jmx_users | length > 0
+           and (cassandra_config_jmx_same.stdout is not defined or _cassandra_config_jmx_changes | default([]) | length > 0
+                or cassandra_config_jmx_header.stdout | default('[]') | from_json | length > 0) }}
+      exporter: >-
+        {{ cassandra_prometheus_exporter_enabled | bool or cassandra_config_exporter_unused.stdout_lines is not defined
+           or cassandra_config_exporter_unused.stdout_lines | length > 0 }}

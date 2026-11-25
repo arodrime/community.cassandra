@@ -154,7 +154,7 @@ def check_heap():
 
 def test_role_leaves_them():
     main = load_tasks(os.path.join(ROOT, "roles", "cassandra_config", "tasks", "main.yml"))
-    block = find_task(main, "Configure")["block"]
+    block = find_task(main, "Work out the changes")["block"]
     note = find_task(block, "List the files to change and whether to ask first")
     results = [{"item": "logback.xml", "stat": {"exists": True}}, {"item": "cassandra-env.sh", "stat": {"exists": False}}]
     for initialized, kept in [(True, ["logback.xml"]),  # a node without the file gets the role's
