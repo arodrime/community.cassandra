@@ -1630,7 +1630,9 @@
           {{ out }}
         cassandra_service_node_checks_before: "{{ inventory_hostname not in _no_login }}"
         _cassandra_health_not_peers: "{{ _no_login | join(',') or cassandra_target_nodes | default('') }}"
-        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok }}"
+        # the other nodes where Cassandra is not running may stay down: those started later in the run, those
+        # left stopped (computed once for every node in the find play)
+        cassandra_service_health_down_ok: "{{ _cassandra_apply_config_down_ok_all.batch[inventory_hostname] }}"
         _cassandra_health_no_wait: "{{ cassandra_service_health_down_ok | length > 0 }}"  # they will not come back
 
 # The others one at a time: cluster checked, config written, node drained and
