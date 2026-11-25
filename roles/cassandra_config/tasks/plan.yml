@@ -17,6 +17,9 @@
           {{ query('ansible.builtin.vars', *(_cassandra_config_check_vars + _by_name), default='(not set)') | to_json
              | hash('sha1') }}
       no_log: true  # (a sha1, but of values that hold secrets)
+      # a value that cannot be read (a template of yours that fails...): no key, the node checked on its own, its
+      # checks saying what fails
+      ignore_errors: true
       vars:
         # the ones checks.yml looks up by name
         _by_name: >-
