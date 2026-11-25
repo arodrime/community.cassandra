@@ -1105,6 +1105,50 @@ def cassandra_apply_config_down_ok(nodes, hostvars, host, then, check, batch=Fal
     return out if batch or then != "restart" or check else []
 
 
+def _flag(value):
+    return boolean(value if value is not None else False, strict=False)
+
+
+def cassandra_apply_config_view(hosts, hostvars):
+    """hosts (the compare play's), hostvars -> {host: what apply_config's later steps read of it}, each host's
+    variables read once (on ansible-core 2.16 each read of hostvars[host] builds all of them, its facts too): its
+    plan (cassandra_apply_config_then, _todo, _marked, _unit_failed), whether a disk setting waits for its restart
+    window (disks_window), whether its JMX password file is written first (jmx_password), the data disk warnings
+    the plan said (disk_warned), its ring address, dc and rack (_cassandra_preflight's, else the inventory's dc and
+    rack), under the names cassandra_apply_config_down_ok reads. Names, addresses and words of the plan only."""
+    view = {}
+    for host in hosts or []:
+        v = hostvars[host]
+        pre = v.get("_cassandra_preflight") or {}
+        notes = v.get("cassandra_apply_config_notes") or []
+        warned = "WARNING  data disks: "
+        view[host] = {
+            "cassandra_apply_config_then": v.get("cassandra_apply_config_then") or "",
+            "cassandra_apply_config_todo": _flag(v.get("cassandra_apply_config_todo")),
+            "cassandra_apply_config_marked": _flag(v.get("cassandra_apply_config_marked")),
+            "cassandra_apply_config_unit_failed": _flag(v.get("cassandra_apply_config_unit_failed")),
+            "disks_window": len(v.get("cassandra_apply_config_disks_window") or []) > 0,
+            "jmx_password": "jmxremote.password" in [c.get("file") for c in v.get("_cassandra_config_jmx_changes") or []],
+            "disk_warned": [str(n)[len(warned):] for n in notes if str(n).startswith(warned)],
+            "_cassandra_preflight": {"ring_address": pre.get("ring_address", ""),
+                                     "cassandra_dc": pre.get("cassandra_dc", v.get("cassandra_dc", "")),
+                                     "cassandra_rack": pre.get("cassandra_rack", v.get("cassandra_rack", ""))}}
+    return view
+
+
+def cassandra_apply_config_down_ok_all(view, nodes, check):
+    """view (cassandra_apply_config_view's), nodes: the cluster's nodes in the order apply_config does them; check:
+    --check -> {"batch": {host: down_ok}, "serial": {host: down_ok}}: cassandra_apply_config_down_ok of each node
+    of the view, at once and one at a time, worked out once for the run."""
+    nodes = [n for n in nodes or [] if n in view]
+    out = {"batch": {}, "serial": {}}
+    for host in nodes:
+        for mode in ("batch", "serial"):
+            out[mode][host] = cassandra_apply_config_down_ok(nodes, view, host, view[host]["cassandra_apply_config_then"],
+                                                             check, batch=mode == "batch")
+    return out
+
+
 # the reasons said for a node not restarted, the files written proven to change nothing for it
 # (cassandra_apply_config_no_effect): its JVM gets the same arguments from them, a JVM options file its Java does not
 # read, logback.xml read again by logback
@@ -1231,6 +1275,8 @@ class FilterModule(object):
             "cassandra_apply_config_nodes": cassandra_apply_config_nodes,
             "cassandra_apply_config_ring_unknown": cassandra_apply_config_ring_unknown,
             "cassandra_apply_config_down_ok": cassandra_apply_config_down_ok,
+            "cassandra_apply_config_down_ok_all": cassandra_apply_config_down_ok_all,
+            "cassandra_apply_config_view": cassandra_apply_config_view,
             "cassandra_apply_config_no_return": cassandra_apply_config_no_return,
             "cassandra_apply_config_no_effect": cassandra_apply_config_no_effect,
         }
