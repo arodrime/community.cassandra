@@ -1768,3 +1768,27 @@ def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written()
     assert "remove cassandra_linux_sysctl from host_vars/node2/ (the rest of it is the collection's default)" in text, \
         text
 
+
+def test_a_value_left_as_every_node_has_it_goes_in_the_cluster_s_group():
+    # (2026-11-25, a 24-node import) the packages no node has and a value every node has, the same on all: in
+    # host_vars of each node, not in group_vars/<cluster> (the owner's rule: the cluster's value there, the
+    # exceptions in host_vars); a *_manage switch stays per node (a host rebuilt under its name loses it)
+    left = {"cassandra_install_jemalloc": False, "cassandra_dsbulk_install": False, "cassandra_medusa_link_dir": "",
+            "cassandra_linux_manage": False}
+    nodes = [node(i, keep=dict(left)) for i in range(1, 4)]
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    group = layout["group_vars"][layout["cluster_group"]]
+    for k in ("cassandra_install_jemalloc", "cassandra_dsbulk_install", "cassandra_medusa_link_dir"):
+        assert group[k] == left[k] and not [h for h, v in layout["host_vars"].items() if k in v], k
+    assert "cassandra_linux_manage" not in group
+    assert all(v.get("cassandra_linux_manage") is False for v in layout["host_vars"].values())
+    assert "LEFT AS EVERY NODE HAS IT, in group_vars/my_cluster/main.yml (nodes added later get it too):" \
+        in layout["report"]
+    # another value on one node, or a node not read: per node, as before
+    nodes[2]["keep"]["cassandra_medusa_link_dir"] = "/usr/local/bin"
+    layout = cassandra_inventory_layout(nodes, "My Cluster")
+    assert "cassandra_medusa_link_dir" not in layout["group_vars"]["my_cluster"]
+    assert layout["host_vars"]["node1"]["cassandra_medusa_link_dir"] == ""
+    assert layout["group_vars"]["my_cluster"]["cassandra_install_jemalloc"] is False
+    layout = cassandra_inventory_layout(nodes + [node(4, read=False)], "My Cluster")
+    assert "cassandra_install_jemalloc" not in layout["group_vars"]["my_cluster"]

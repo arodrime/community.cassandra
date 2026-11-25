@@ -922,7 +922,9 @@ def test_layout_node_not_read_names_what_it_keeps():
 def test_layout_value_kept_on_a_node_is_reported():
     keep = {"cassandra_service_unit_manage": False, "cassandra_log_dir": "/var/log/cassandra"}
     out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
-    assert out["host_vars"] == {"n1": dict(keep, cassandra_imported_host=True)}
+    # (a value every node has, here the only one: the cluster's; a *_manage switch: the node's)
+    assert out["host_vars"] == {"n1": {"cassandra_service_unit_manage": False, "cassandra_imported_host": True}}
+    assert out["group_vars"]["c"]["cassandra_log_dir"] == "/var/log/cassandra"
 
 
 def test_layout_no_marker_for_the_repositories_alone():
@@ -935,7 +937,7 @@ def test_layout_no_marker_for_the_repositories_alone():
 def test_layout_no_marker_without_a_switch():
     # a value kept (log dir) but every part set up by the roles: nothing for add_node to refuse
     keep = {"cassandra_log_dir": "/var/log/cassandra"}
-    out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep)], "c")
+    out = cassandra_inventory_layout([dict(node("n1", "dc1", "r1"), keep=keep), dict(node("n2", "dc1", "r1"))], "c")
     assert out["host_vars"] == {"n1": keep}
     assert "cassandra_log_dir: \"/var/log/cassandra\", as this node has it" in out["report"]
 

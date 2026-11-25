@@ -1,0 +1,3 @@
+---
+bugfixes:
+- "import_cluster - a value left as the nodes have it that every node read has the same (a package no node has: ``cassandra_install_jemalloc: false``, ``cassandra_dsbulk_install: false``; a value such as ``cassandra_medusa_link_dir``) is written once in ``group_vars/<cluster>/``, as the other variables the nodes share; it was written in every node's host_vars. report.details.txt names them (``LEFT AS EVERY NODE HAS IT``). The ``*_manage: false`` switches stay per node, and with a node not read every such value stays per node."

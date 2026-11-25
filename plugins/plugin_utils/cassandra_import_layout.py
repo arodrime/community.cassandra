@@ -528,6 +528,27 @@ def _placement_lines(cluster, said):
     return lines
 
 
+def _grouped_keep(read, nodes):
+    """The values left as the nodes have them that go in the cluster's group: every node read, each with the same
+    value; the system java (cassandra_java_set_default), never another *_manage switch (a node set up another way:
+    a host rebuilt under its name loses it), a file or a part kept -> sorted [variable]."""
+    if not read or len(read) != len(nodes):
+        return []
+    first = read[0].get("keep") or {}
+    return sorted(k for k, v in first.items()
+                  if (k == JAVA_DEFAULT or k not in KEEP) and k not in ("cassandra_config_keep_files", KEPT_PARTS_VAR)
+                  and all(k in (n.get("keep") or {}) and n["keep"][k] == v for n in read))
+
+
+def _grouped_keep_lines(read, cluster, grouped):
+    """The report's lines on the values left as every node has them, written in the cluster's group -> [line]."""
+    rows = [k for k in grouped if k != JAVA_DEFAULT]
+    if not rows:
+        return []
+    return ["LEFT AS EVERY NODE HAS IT, in group_vars/%s/main.yml (nodes added later get it too):" % cluster] + [
+        "  %s: %s" % (k, _show(k, read[0]["keep"][k])) for k in rows] + [""]
+
+
 def _java_default_line(read, cluster, grouped):
     """The report's line on the system java the roles leave as it is (cassandra_java_set_default: false): on
     which nodes, why, where it is set, what true would do -> [line], [] when on no node."""
@@ -617,15 +638,16 @@ def cassandra_inventory_layout(nodes, cluster_name, group="", given=None):
             drift.append(k)
     differences = ["DIFFERENCES BETWEEN NODES (kept per group or node, check they are wanted):"]
     differences += _differences(drift, read, dcg, rackg) or ["  none"]
-    # the system java left as it is on every node, all read: in the cluster's group (the nodes keep it in "keep")
-    grouped = ((JAVA_DEFAULT,) if read and len(read) == len(nodes)
-               and all(JAVA_DEFAULT in (n.get("keep") or {}) for n in read) else ())
-    if grouped:
-        group_vars[cluster][JAVA_DEFAULT] = False
+    # the system java left as it is on every node, all read: in the cluster's group (the nodes keep it in "keep");
+    # so are the other values left as the nodes have them, the same on every node (the cluster's, not a node's)
+    grouped = _grouped_keep(read, nodes)
+    for k in grouped:
+        group_vars[cluster][k] = read[0]["keep"][k]
     report = _layout_notes(cluster_name, cluster, nodes, read, host_vars, medusa, domain, templates,
                            shared)
     report += _placement_lines(cluster, said)
-    report += _java_default_line(read, cluster, bool(grouped))
+    report += _java_default_line(read, cluster, JAVA_DEFAULT in grouped)
+    report += _grouped_keep_lines(read, cluster, grouped)
     for n in nodes:
         keep = dict((k, v) for k, v in (n.get("keep") or {}).items() if k not in grouped)
         if keep:
