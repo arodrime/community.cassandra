@@ -1,0 +1,31 @@
+---
+# (action_apply_config.yml: a release update with its repository, not --check)
+- name: Apply the repository of the release
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_repository
+  vars:
+    _cassandra_change_report_quiet: true  # shown before the run was confirmed, and in its recap at the end
+
+- name: Read the installed packages
+  ansible.builtin.command:
+    argv: "{{ ['cassandra'] | community.cassandra.cassandra_package_query(ansible_facts['os_family']) }}"
+  environment:
+    LC_ALL: C  # "not installed" said in English, as the filter reads it
+  register: cassandra_apply_config_packages_read
+  changed_when: false
+  failed_when: false  # not installed; nothing read at all: the check below fails
+  check_mode: false  # a read
+
+- name: Look for the release in the repository written
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_install
+    tasks_from: release_check.yml
+  vars:
+    _cassandra_install_upgrade: true  # (cassandra_package_version: the inventory's, the release wanted)
+    _cassandra_install_before: "{{ cassandra_apply_config_packages_read | community.cassandra.cassandra_installed_packages }}"
+    _cassandra_install_again: resume
+    _cassandra_install_changed_before: >-
+      {{ (['its OS settings (' ~ cassandra_apply_config_os_live | map(attribute='item') | join(', ') ~ ')']
+          if cassandra_apply_config_os_done | default(false) | bool and cassandra_apply_config_os_live | default([])
+          else [])
+         + (['its JMX password file'] if _cassandra_config_jmx_written is defined else []) }}

@@ -1,0 +1,57 @@
+---
+# (repository.yml: Debian & Ubuntu, after the signing key)
+- name: Remove the repositories of the other series (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/cassandra-{{ item.0 }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ ['311x', '40x', '41x', '50x'] | reject('equalto', cassandra_version) | product(['list', 'sources']) | list }}"
+  register: _cassandra_repository_old
+  when: ansible_facts['os_family'] == "Debian"
+
+# Earlier versions of the role wrote a one-line .list file
+- name: Remove the one-line Cassandra apt source (Debian & Ubuntu)
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/cassandra-{{ cassandra_version }}.list"
+    state: absent
+  register: _cassandra_repository_one_line
+  when: ansible_facts['os_family'] == "Debian"
+
+# --check on a blank host: python3-debian, which deb822_repository needs even
+# to compare, is not really installed yet
+- name: Look for python3-debian (--check)
+  ansible.builtin.command: python3 -c "import debian"
+  register: _cassandra_repository_python_debian
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - _cassandra_repository_check
+    - ansible_facts['os_family'] == "Debian"
+
+- name: Ensure Cassandra apt repository exists (Debian & Ubuntu)
+  ansible.builtin.deb822_repository:
+    name: "cassandra-{{ cassandra_version }}"
+    types: deb
+    uris: "{{ cassandra_install_url }}"
+    suites: "{{ cassandra_version }}"
+    components: main
+    signed_by: "{{ cassandra_apt_keyring_path }}"
+  register: _cassandra_repository_apt
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - _cassandra_repository_python_debian.rc | default(0) == 0
+
+# (its credentials or its signing key changed alone too: the cache read before them may lack the repository's
+# packages, which a release check of the same run reads)
+- name: Update the apt cache (Debian & Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+  retries: 3
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - >-
+      _cassandra_repository_apt is changed or _cassandra_repository_old is changed
+      or _cassandra_repository_credentials | default({}) is changed
+      or _cassandra_repository_credentials_removed | default({}) is changed
+      or _cassandra_repository_key_shipped | default({}) is changed
+      or _cassandra_repository_key_downloaded | default({}) is changed

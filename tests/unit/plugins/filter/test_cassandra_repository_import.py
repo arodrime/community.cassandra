@@ -161,15 +161,17 @@ def test_what_the_role_writes():
     assert templar_for({"ansible_facts": {"os_family": "Debian"}}).template(url) == DEB_URL
     assert templar_for({"ansible_facts": {"os_family": "RedHat"}, "cassandra_version": "41x"}).template(url) == RPM_URL % "41x"
     assert (defaults["cassandra_rpm_key_path"], defaults["cassandra_apt_keyring_path"]) == (RPM_KEY, DEB_KEY)
-    with open(os.path.join(role, "tasks", "repository.yml")) as fh:
-        tasks = yaml.safe_load(fh)
+    tasks = []
+    for name in ("repository.yml", "apt_source.yml"):  # (the apt source: Debian, included by repository.yml)
+        with open(os.path.join(role, "tasks", name)) as fh:
+            tasks += yaml.safe_load(fh)
     yum = next(t["ansible.builtin.yum_repository"] for t in tasks if "ansible.builtin.yum_repository" in t
                and t["ansible.builtin.yum_repository"].get("baseurl"))
     assert yum["description"] == "Official Cassandra {{ cassandra_version }} yum repo"
     assert set(k.replace("description", "name") for k in yum if k not in ("mode",)) == YUM_KEYS
     deb = next(t["ansible.builtin.deb822_repository"] for t in tasks if "ansible.builtin.deb822_repository" in t)
     assert sorted(deb) == ["components", "name", "signed_by", "suites", "types", "uris"]  # DEB_FILE's fields
-    with open(os.path.join(role, "tasks", "repository.yml")) as fh:
+    with open(os.path.join(role, "tasks", "apt_credentials.yml")) as fh:
         assert "# Managed by Ansible (community.cassandra.cassandra_repository)\n      machine" in fh.read()
 
 

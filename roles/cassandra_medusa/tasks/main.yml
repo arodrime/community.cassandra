@@ -29,8 +29,10 @@
   register: cassandra_medusa_venv_python
   when: cassandra_medusa_venv != ''
 
+# (an existing virtualenv keeps its own Python: nothing of python.yml then)
 - name: The Python for Medusa
-  ansible.builtin.import_tasks: python.yml
+  ansible.builtin.include_tasks: python.yml
+  when: cassandra_medusa_venv == '' or not cassandra_medusa_venv_python.stat.exists
 
 - name: Create the virtualenv
   ansible.builtin.command:

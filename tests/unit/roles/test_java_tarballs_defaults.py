@@ -114,7 +114,7 @@ def test_tarball_url_without_a_file_name_is_refused():
 
 def test_an_existing_java_directory_is_emptied_only_when_this_role_made_it():
     # in java_check.yml: install, update_java, upgrade and the new node checks refuse before anything changes
-    with open(os.path.join(os.path.dirname(DEFAULTS), "..", "tasks", "java_check.yml")) as f:
+    with open(os.path.join(os.path.dirname(DEFAULTS), "..", "tasks", "java_check_home.yml")) as f:
         tasks = yaml.safe_load(f)
     check = next(t for t in tasks if t["name"] == "The Java directory is new, empty or this role's")
     # for any Java directory, cassandra_java_home or one under cassandra_java_tarball_dir

@@ -1,0 +1,30 @@
+---
+# (action_apply_config.yml: a node to start)
+# read again: it may have come up since the plan
+- name: Read the state of its unit
+  ansible.builtin.systemd_service:
+    name: cassandra
+  register: cassandra_apply_config_unit_now
+  failed_when: false  # no unit (not-found) is not a failure; anything else, the checks below
+
+# failed or stopped at the plan, running now: started by hand on the former config, which the start
+# would not change
+- name: Stop if it came up since the plan
+  ansible.builtin.assert:
+    that: _looping | bool or not _up | bool
+    fail_msg: >-
+      {{ inventory_hostname }}: Cassandra came up since the plan was shown, with the config it had then. Nothing was
+      changed on it: run apply_config again (it then restarts it if its config changes).
+    quiet: true
+
+- name: Stop its restart loop
+  ansible.builtin.systemd_service:
+    name: cassandra
+    state: stopped
+  when: _looping | bool or _now.ActiveState | default('') == 'activating'
+
+# no module resets a unit's failed state
+- name: Reset its start limit
+  ansible.builtin.command: systemctl reset-failed cassandra
+  changed_when: false
+  failed_when: false  # not failed: nothing to reset

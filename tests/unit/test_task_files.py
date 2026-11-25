@@ -24,6 +24,17 @@ def test_imports_inlined_with_their_when_first_and_the_task_vars_winning(tmp_pat
     assert dynamic == {"include_tasks": "{{ f }}"}
 
 
+def test_a_static_include_keeps_its_task_with_the_tasks_of_its_file_under_it(tmp_path):
+    write(tmp_path / "inner.yml", "- name: a\n  debug: {}\n  when: x\n")
+    main = write(tmp_path / "main.yml", "- name: part\n  include_tasks: inner.yml\n  when: z\n  vars: {v: 1}\n"
+                                        "- include_tasks: inner.yml\n  loop: [1]\n")
+    part, looped = load_tasks(main)
+    assert (part["include_tasks"], part["when"], part["vars"]) == ("inner.yml", "z", {"v": 1})
+    assert part["block"] == [{"name": "a", "debug": {}, "when": "x"}]
+    assert find_task([part], "a")["when"] == "x"
+    assert looped == {"include_tasks": "inner.yml", "loop": [1]}  # (another keyword: left as it is)
+
+
 def test_an_import_keyword_it_does_not_apply_is_refused(tmp_path):
     write(tmp_path / "inner.yml", "- name: a\n  debug: {}\n")
     main = write(tmp_path / "main.yml", "- import_tasks: inner.yml\n  tags: [x]\n")

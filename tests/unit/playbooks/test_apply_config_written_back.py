@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
-    FIND, find, render, with_task_vars)
+    FIND, find, load_parts, render, with_task_vars)
 from ansible_collections.community.cassandra.tests.unit.task_files import find_task, shell_script
 from ansible_collections.community.cassandra.tests.unit.helpers import with_apply_config_view
 
@@ -74,7 +74,7 @@ def test_a_file_written_back_as_the_running_cassandra_started_with_it_is_no_rest
     assert needs(changes=["cassandra.yaml"], new={"cassandra.yaml": "num_tokens: 8\n"}) == (
         "none", ["cassandra.yaml written back as the running Cassandra started with it: no restart for it"])
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    action = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     write = next(t for t in action if t.get("name") == "Write the config")
     reload_seeds = write["vars"]["cassandra_config_reload_seeds"]
     assert render(reload_seeds, {"cassandra_apply_config_as_started": {"files": ["cassandra.yaml"]}}) is True
@@ -111,7 +111,7 @@ def test_the_files_written_back_are_noted_before_the_decision():
 def test_the_jvm_is_checked_again_before_the_write():
     # restarted between the plan and the write (the question may wait): refused, nothing written on it
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    action = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in action]
     check = action[names.index("Check the JVM a file is written back for still runs")]
     assert names.index("Check the JVM a file is written back for still runs") < names.index("Write the config")
@@ -130,7 +130,7 @@ def test_the_jvm_is_checked_again_before_the_write():
 
 def test_the_files_written_back_are_checked_after_the_write():
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    action = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in action]
     assert names.index("Write the config") < names.index("Check the files written back")
     check = action[names.index("Check the files written back")]
@@ -381,7 +381,7 @@ def test_anything_unproven_restarts_as_before(tmp_path, case):
 
 def test_the_proven_files_are_recorded_only_as_planned_for_that_jvm():
     from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import load
-    action = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    action = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     name = "Record the files written with no effect as the ones the running Cassandra runs with"
     block = next(t for t in action if t.get("name") == name)
     assert "not ansible_check_mode" in block["when"]

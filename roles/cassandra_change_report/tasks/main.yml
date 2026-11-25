@@ -37,36 +37,7 @@
   when: cassandra_change_report_dir != ""
 
 - name: Write the change report on the controller
+  ansible.builtin.include_tasks: write.yml
   when:
     - cassandra_change_report_dir != ""
     - cassandra_change_report_items | length > 0
-  block:
-    - name: Create the report directory
-      ansible.builtin.file:
-        path: "{{ cassandra_change_report_dir }}/{{ cassandra_change_report_stamp }}"
-        state: directory
-        mode: "0700"  # reports show config diffs
-      delegate_to: localhost
-      become: false
-      vars:
-        ansible_become: false  # an inventory ansible_become beats the become keyword
-      check_mode: false
-      changed_when: false  # a report is not a change to the host
-
-    - name: Write {{ inventory_hostname }}-{{ cassandra_change_report_role }}.yml
-      ansible.builtin.copy:
-        dest: "{{ cassandra_change_report_dir }}/{{ cassandra_change_report_stamp }}/{{ inventory_hostname }}-{{ cassandra_change_report_role }}.yml"
-        content: "{{ report | to_nice_yaml(indent=2, width=200, sort_keys=false) }}"
-        mode: "0600"
-      vars:
-        ansible_become: false  # an inventory ansible_become beats the become keyword
-        report:
-          host: "{{ inventory_hostname }}"
-          role: "{{ cassandra_change_report_role }}"
-          mode: "{{ 'check' if ansible_check_mode else 'applied' }}"
-          date: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-          changes: "{{ cassandra_change_report_items }}"
-      delegate_to: localhost
-      become: false
-      check_mode: false
-      changed_when: false  # a report is not a change to the host

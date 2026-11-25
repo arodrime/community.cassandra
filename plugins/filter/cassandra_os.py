@@ -8,6 +8,8 @@ cassandra_os_import: what import_cluster's read-only script printed on a node
     give the nodes added later the same tuning.
 cassandra_sysctl_write_only: the write-only kernel keys of cassandra_linux_sysctl
     (cassandra_linux's os.yml).
+cassandra_sysctl_todo: the keys of cassandra_linux_sysctl that ansible.posix.sysctl
+    would change, set or removed (cassandra_linux's os.yml: only they are run).
 
 The script prints one record per line, "kind|field|...": the files as they
 are (comments and blank lines left out), and the live values.
@@ -21,6 +23,7 @@ cassandra_linux and cassandra_firewall would change there), firewall_touched and
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import base64
 import hashlib
 import os
 import re
@@ -1708,6 +1711,89 @@ def cassandra_sysctl_write_only(keys):
     return sorted(str(k) for k in (keys or {}) if _sysctl_key(str(k)) in WRITE_ONLY_SYSCTL)
 
 
+# ansible.posix.sysctl's reading of a value (its _parse_value, after its argument spec made it a string)
+SYSCTL_TRUE = ("y", "yes", "on", "1", "true", "t")
+SYSCTL_FALSE = ("n", "no", "off", "0", "false", "f")
+# a key it runs as is, as the shell of os.yml gives it (else: not judged, run)
+SYSCTL_PLAIN_KEY = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+
+
+def _sysctl_module_value(value):
+    value = str(value)
+    return "1" if value.lower() in SYSCTL_TRUE else "0" if value.lower() in SYSCTL_FALSE else value.strip()
+
+
+def _sysctl_module_file(record):
+    """A "file|<path>|<real path>|<base64 or ->" record -> (real path, {key: value} as ansible.posix.sysctl reads
+    the file, the last line of a key winning), None when not read or when a key has several lines (a write
+    of another key keeps only its first one: what the next item reads is not what was read here)."""
+    path, real, content = (record.split("|", 3) + ["", "", ""])[1:4]
+    if content == "-":
+        return None
+    try:
+        text = base64.b64decode(content, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    values = {}
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if not line or line.startswith(("#", ";")) or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() in values:
+            return None
+        values[key.strip()] = value.strip()
+    return (real, values) if real else None  # (no real path: not told from /etc/sysctl.conf)
+
+
+def cassandra_sysctl_todo(wanted, lines, live):
+    """cassandra_linux_sysctl, the lines of os.yml's read (a file record for the role's file then /etc/sysctl.conf,
+    a live record per key: "live|<key>|<base64 of sysctl -e -n>", - when it failed), whether keys are set live ->
+    {'set': [...], 'remove': [...]}: the dict2items items whose ansible.posix.sysctl task would change something,
+    setting it (state present) or removing it from /etc/sysctl.conf (state absent). Every item when a file was not
+    read (or, set live, a value); every removal when both files are the same one (the set loop writes it first). Set live,
+    every key after one that runs: a key written live may change another one (net.ipv4.ip_forward the forwarding
+    of every interface, vm.dirty_bytes vm.dirty_ratio...), which the module reads again at its item."""
+    items = [{"key": k, "value": v} for k, v in (wanted or {}).items()]
+    files = [_sysctl_module_file(r) for r in lines or [] if r.startswith("file|")]
+    procs = dict(r.split("|", 2)[1:3] for r in lines or [] if r.startswith("live|") and r.count("|") >= 2)
+    keys = [str(i["key"]).strip() for i in items]
+    # (a key the module would write otherwise, twice, or a value that writes other lines or that templating turns
+    # into another value: what a later item reads is not what was read here)
+    if (len(files) != 2 or None in files or len(set(keys)) != len(keys) or not all(SYSCTL_PLAIN_KEY.match(k) for k in keys)
+            or any(c in _sysctl_module_value(i["value"]) for i in items for c in "\r\n")
+            or any(str(i["value"]).strip()[:1] in ("[", "{") for i in items)):
+        return {"set": items, "remove": items}
+    (own_path, own), (conf_path, conf) = files
+
+    def proc(key):
+        if procs.get(key, "-") == "-":
+            return None
+        try:
+            return base64.b64decode(procs[key], validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+    live = boolean(live, strict=False)
+
+    def set_todo(item):
+        key, value = str(item["key"]).strip(), _sysctl_module_value(item["value"])
+        if item["value"] is None or value == "" or own.get(key) != value:
+            return True  # (no value: the module refuses it)
+        return live and (proc(key) is None or proc(key).split() != value.split())
+
+    def remove_todo(item):
+        key = str(item["key"]).strip()
+        return own_path == conf_path or bool(conf.get(key))
+
+    todo = []
+    for item in items:
+        if (todo and live) or set_todo(item):
+            todo.append(item)
+    return {"set": todo, "remove": [i for i in items if remove_todo(i)]}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_os_import": cassandra_os_import, "cassandra_sysctl_write_only": cassandra_sysctl_write_only}
+        return {"cassandra_os_import": cassandra_os_import, "cassandra_sysctl_write_only": cassandra_sysctl_write_only,
+                "cassandra_sysctl_todo": cassandra_sysctl_todo}

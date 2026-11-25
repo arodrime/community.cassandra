@@ -29,6 +29,11 @@ def load(*path):
         return yaml.safe_load(f)
 
 
+def load_parts(*path):
+    """A task file, the tasks of the files it includes under their include_tasks (task_files.load_tasks)."""
+    return load_tasks(os.path.join(TOP, *path))
+
+
 def walk(tasks):
     for t in tasks or []:
         yield t
@@ -173,7 +178,7 @@ def test_nothing_to_do():
 
 
 def test_the_action_restarts_starts_or_only_writes():
-    tasks = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+    tasks = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
     names = [t["name"] for t in tasks]
     # a restart loop is stopped before the write: it would not come up on the former config
     assert names == ["Clear the unit's failed starts", "Check the JVM a file is written back for still runs",

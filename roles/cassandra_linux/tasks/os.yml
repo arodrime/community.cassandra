@@ -134,6 +134,27 @@
     mode: "0755"
   when: cassandra_linux_sysctl | length > 0
 
+# The two files and the live values as ansible.posix.sysctl reads them: the keys it would leave as they are are
+# not run (one module run per key and node otherwise), every key when something was not read
+- name: Read the kernel settings files and values
+  ansible.builtin.shell: |
+    set -f  # (the keys split on spaces, not globbed)
+    for f in "$SYSCTL_FILE" /etc/sysctl.conf; do
+      c=-; [ ! -e "$f" ] && c=""; [ -f "$f" ] && { c=$(base64 -w0 < "$f") || c=-; }
+      echo "file|$f|$(readlink -f "$f")|$c"
+    done
+    for k in $SYSCTL_KEYS; do
+      v=$(LC_ALL=C sysctl -e -n "$k" 2>/dev/null) && echo "live|$k|$(printf '%s' "$v" | base64 -w0)" || echo "live|$k|-"
+    done
+  environment:
+    SYSCTL_FILE: "{{ cassandra_linux_sysctl_file }}"
+    SYSCTL_KEYS: "{{ cassandra_linux_sysctl.keys() | map('string') | join(' ') }}"  # (one with a space: not judged)
+  register: cassandra_linux_sysctl_read
+  changed_when: false
+  failed_when: false  # not read: every key run
+  check_mode: false  # reads only
+  when: cassandra_linux_sysctl | length > 0
+
 # Each key set live alone (sysctl -w), never the file loaded again (sysctl -p):
 # its other lines (an admin's file) may be keys a later file sets again, or
 # write-only actions
@@ -145,7 +166,9 @@
     sysctl_file: "{{ cassandra_linux_sysctl_file }}"
     sysctl_set: "{{ _cassandra_linux_live }}"
     reload: false
-  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  loop: "{{ (cassandra_linux_sysctl | community.cassandra.cassandra_sysctl_todo(_read, _cassandra_linux_live)).set }}"
+  vars:
+    _read: "{{ cassandra_linux_sysctl_read.stdout_lines if cassandra_linux_sysctl_read.rc | default(1) == 0 else [] }}"
 
 # /etc/sysctl.conf is read last: a line left there by an earlier version of
 # the role would win over the file above
@@ -155,17 +178,21 @@
     state: absent
     sysctl_file: /etc/sysctl.conf
     reload: false
-  loop: "{{ cassandra_linux_sysctl | dict2items }}"
+  loop: "{{ (cassandra_linux_sysctl | community.cassandra.cassandra_sysctl_todo(_read, _cassandra_linux_live)).remove }}"
   loop_control:
     label: "{{ item.key }}"
   register: cassandra_linux_sysctl_conf
   when: cassandra_linux_sysctl_file != '/etc/sysctl.conf'
+  vars:
+    _read: "{{ cassandra_linux_sysctl_read.stdout_lines if cassandra_linux_sysctl_read.rc | default(1) == 0 else [] }}"
 
 # apply_config, on a node where Cassandra runs: in its restart window instead
 # (Cassandra stopped: a clock stepped under it would date its writes wrongly)
 - name: Time sync
   ansible.builtin.include_tasks: timesync.yml
-  when: not _cassandra_linux_timesync_later | default(false) | bool
+  when:
+    - not _cassandra_linux_timesync_later | default(false) | bool
+    - cassandra_linux_timesync | bool  # (false: each of its tasks skipped, chrony looked for above)
 
 - name: Limits of the cassandra user
   ansible.builtin.import_tasks: limits.yml

@@ -58,8 +58,8 @@
     - item in _cassandra_linux_thp_set
     - _cassandra_linux_before['thp|' ~ item] | default('') != _cassandra_linux_thp_set[item]
 
-# (left to apply_config's restart window, _cassandra_linux_timesync_later: what an earlier run registered is
-# not this one's)
+# (left to apply_config's restart window, _cassandra_linux_timesync_later, or cassandra_linux_timesync false, its
+# tasks not run: what an earlier run registered is not this one's)
 - name: Add the time sync package to the change list
   ansible.builtin.set_fact:
     _cassandra_linux_items: >-
@@ -68,6 +68,7 @@
   when:
     - not _cassandra_linux_timesync_later | default(false) | bool
     - cassandra_timesync_install | default({}) is changed
+    - cassandra_linux_timesync | bool
 
 - name: Add the time sync service to the change list
   ansible.builtin.set_fact:
@@ -83,6 +84,7 @@
           and _cassandra_linux_before['timesync|service'] != 'active'
           and cassandra_linux_timesync | bool
           and not (cassandra_offline | bool and cassandra_timesync_unit.rc | default(1) != 0))
+    - cassandra_linux_timesync | bool
 
 - name: Add the time servers of chrony to the change list
   ansible.builtin.set_fact:
@@ -96,7 +98,9 @@
                                 'timesync': true}) -%}
       {%- endfor -%}
       {{ _cassandra_linux_items + out }}
-  when: not _cassandra_linux_timesync_later | default(false) | bool
+  when:
+    - not _cassandra_linux_timesync_later | default(false) | bool
+    - cassandra_linux_timesync | bool
 
 - name: Add the nproc limit to the change list
   ansible.builtin.set_fact:

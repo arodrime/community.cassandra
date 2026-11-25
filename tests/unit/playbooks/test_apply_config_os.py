@@ -372,11 +372,13 @@ def test_the_restart_window_reuses_the_restart():
     os_tasks = load("roles", "cassandra_linux", "tasks", "os.yml")
     sync = [t for t in os_tasks if t.get("name") == "Time sync"][0]
     assert sync["ansible.builtin.include_tasks"] == "timesync.yml"
-    assert sync["when"] == "not _cassandra_linux_timesync_later | default(false) | bool"
+    # (cassandra_linux_timesync false: none of its tasks, nor its items in the report below)
+    assert sync["when"] == ["not _cassandra_linux_timesync_later | default(false) | bool", "cassandra_linux_timesync | bool"]
     report = load("roles", "cassandra_linux", "tasks", "report.yml")
     for name in ("Add the time sync package to the change list", "Add the time sync service to the change list"):
         compare = [t for t in report if t.get("name") == name][0]
         assert compare["when"][0] == "not _cassandra_linux_timesync_later | default(false) | bool"
+        assert compare["when"][-1] == "cassandra_linux_timesync | bool"
     # the change report without apply_config's mark
     items = [t for t in report if t.get("name") == "Report"][0]["vars"]["cassandra_change_report_items"]
     assert render(items, {"_cassandra_linux_items": [TIMESYNC]}) == [{"item": "chronyd", "before": "inactive", "after": "active"}]

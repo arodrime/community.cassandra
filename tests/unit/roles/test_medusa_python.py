@@ -17,7 +17,7 @@ SKIPPED = {"skipped": True, "changed": False}
 
 
 def block():
-    return next(t for t in load_tasks(TASKS) if t.get("name") == "Prepare the Python")["block"]
+    return next(t for t in load_tasks(TASKS) if t.get("name") == "The Python for Medusa")["block"]
 
 
 def task(name):

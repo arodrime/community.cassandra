@@ -14,7 +14,7 @@ import os
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
     EXTRA_SECTIONS, EXTRAS_LIVE, cassandra_apply_config_diff)
 from ansible_collections.community.cassandra.tests.unit.playbooks.test_apply_config_permissions import (
-    FIND, NOTE, find, load, render, with_task_vars)
+    FIND, NOTE, find, load, load_parts, render, with_task_vars)
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play
 
 CONF = "/etc/cassandra"
@@ -24,7 +24,7 @@ Max open files            100000               100000               files
 Max locked memory         unlimited            unlimited            bytes
 Max address space         unlimited            unlimited            bytes
 """
-ACTION = load("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
+ACTION = load_parts("roles", "cassandra_operation", "tasks", "action_apply_config.yml")
 
 
 def needs(changes=(), java=False, version=None, unit_nofile=100000, extras=None, running=True, unit_differs=False,

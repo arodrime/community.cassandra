@@ -21,7 +21,7 @@ import yaml
 
 ROLES = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles")
 SCOPE = {"cassandra_linux": None, "cassandra_service": None, "cassandra_firewall": None, "cassandra_repository": None,
-         "cassandra_install": ["cqlsh_python.yml", "cqlsh_links.yml"]}
+         "cassandra_install": ["cqlsh_python.yml", "cqlsh_python311.yml", "cqlsh_links.yml"]}
 CHECK = re.compile(r"ansible_check_mode|_cassandra_(linux|install|repository|firewall)_check|_cassandra_service_act")
 
 L, S, F, R, I = "cassandra_linux", "cassandra_service", "cassandra_firewall", "cassandra_repository", "cassandra_install"
@@ -48,6 +48,7 @@ AUDITED = {
     (L, "disks_find.yml", "Read the active tuned profile", "forced"): ("read",),
     (L, "disks_find.yml", "Read the page size", "forced"): ("read",),
     (L, "os.yml", "Disable Swap", "writer"): ("report", "model"),
+    (L, "os.yml", "Read the kernel settings files and values", "forced"): ("read",),
     (L, "os.yml", "Ensure service to disable THP is enabled at boot", "skipped"): ("report", "model"),
     (L, "os.yml", "Ensure service to disable THP is started", "skipped"): ("report", "model"),
     (L, "report.yml", "Add the time sync service to the change list", "skipped"): ("report",),
@@ -87,20 +88,20 @@ AUDITED = {
     (R, "no_repository.yml", "Update the apt cache (Debian & Ubuntu)", "forced"): ("side effect",),
     (R, "remove_apt_credentials.yml", "Look for the mark of this role in the apt credentials file", "forced"): ("read",),
     (R, "repository.yml", "Check the URL is a repository", "forced"): ("read",),
-    (R, "repository.yml", "Refresh the apt cache (Debian & Ubuntu)", "forced"): ("side effect",),
-    (R, "repository.yml", "Download the signing keys", "forced"): ("side effect",),
-    (R, "repository.yml", "Look for gpg (--check)", "forced,skipped"): ("read",),
-    (R, "repository.yml", "Read the fingerprints of the downloaded keys", "forced"): ("read",),
-    (R, "repository.yml", "Remove the downloaded file", "forced"): ("side effect",),
-    (R, "repository.yml", "Look for python3-debian (--check)", "forced,skipped"): ("read",),
+    (R, "apt_credentials.yml", "Refresh the apt cache (Debian & Ubuntu)", "forced"): ("side effect",),
+    (R, "key_download.yml", "Download the signing keys", "forced"): ("side effect",),
+    (R, "key_download.yml", "Look for gpg (--check)", "forced,skipped"): ("read",),
+    (R, "key_download.yml", "Read the fingerprints of the downloaded keys", "forced"): ("read",),
+    (R, "key_download.yml", "Remove the downloaded file", "forced"): ("side effect",),
+    (R, "apt_source.yml", "Look for python3-debian (--check)", "forced,skipped"): ("read",),
     (I, "cqlsh_links.yml", "Find the site-packages of the Pythons cqlsh may use (RedHat)", "forced"): ("read",),
     (I, "cqlsh_links.yml", "Link cqlshlib into them (RedHat)", "skipped"): ("report",),
     (I, "cqlsh_links.yml", "Find the cqlsh Python pointers written by this role", "forced"): ("read",),
     (I, "cqlsh_python.yml", "Get the system python3 version", "forced"): ("read",),
-    (I, "cqlsh_python.yml", "Check whether the distro repos have python3.11 (Ubuntu)", "forced"): ("read",),
-    (I, "cqlsh_python.yml", "Add the deadsnakes PPA (Ubuntu without python3.11)", "skipped"): ("gap",),
-    (I, "cqlsh_python.yml", "Look up python3.11 in the enabled repos (RedHat)", "forced"): ("read",),
-    (I, "cqlsh_python.yml", "Install python3.11", "skipped"): ("report",),
+    (I, "cqlsh_python311.yml", "Check whether the distro repos have python3.11 (Ubuntu)", "forced"): ("read",),
+    (I, "cqlsh_python311.yml", "Add the deadsnakes PPA (Ubuntu without python3.11)", "skipped"): ("gap",),
+    (I, "cqlsh_python311.yml", "Look up python3.11 in the enabled repos (RedHat)", "forced"): ("read",),
+    (I, "cqlsh_python311.yml", "Install python3.11", "skipped"): ("report",),
 }
 
 

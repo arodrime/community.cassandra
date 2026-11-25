@@ -61,7 +61,7 @@ def _controller_check(tmp_path, checksum, path=None, **more):
     tarball.write_bytes(b"not really a tarball\n")
     variables = dict({"cassandra_java_tarball": str(path or tarball), "cassandra_java_tarball_checksum": checksum,
                       "cassandra_java_version": "17"}, **more)
-    return _play(tmp_path, [_find(_tasks("java_check.yml"), "Check the Java tarball on the controller")], variables)
+    return _play(tmp_path, [_find(_tasks("java_check_home.yml"), "Check the Java tarball on the controller")], variables)
 
 
 @pytest.mark.playbook
@@ -105,7 +105,7 @@ def test_the_controller_check_runs_before_anything_changes():
     # java_check.yml: run by install before java.yml, and by update_java, upgrade and the new node checks in their plan
     names = [t["name"] for t in _tasks("install.yml")]
     assert names.index("Check the Java") < names.index("Java, the package or a tarball, as the default java")
-    check = _find(_tasks("java_check.yml"), "Check the Java tarball on the controller")
+    check = _find(_tasks("java_check_home.yml"), "Check the Java tarball on the controller")
     read = _find(check["block"], "Read the tarball's checksum on the controller")
     assert read["delegate_to"] == "localhost" and read["become"] is False and read["check_mode"] is False
 
@@ -175,7 +175,7 @@ def test_the_java_link_follows_the_java_in_use(tmp_path):
 
 
 def test_the_java_link_refusals(tmp_path):
-    tasks = _tasks("java_check.yml")
+    tasks = _tasks("java_check_home.yml")
     home = _find(tasks, "The Java link is for a Java home")
 
     def refused(link, java_home="/apps/jre/jdk-11.0.30", conf="/etc/cassandra/conf"):

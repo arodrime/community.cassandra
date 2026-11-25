@@ -1,0 +1,83 @@
+---
+# (cqlsh_python.yml: cqlsh managed, its python3.11 picked, downloads allowed)
+- name: Check whether the distro repos have python3.11 (Ubuntu)
+  ansible.builtin.command: apt-cache policy python3.11
+  environment:
+    LC_ALL: C  # its labels are translated
+  register: cassandra_python311_policy
+  changed_when: false
+  check_mode: false  # read-only
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Add the deadsnakes PPA (Ubuntu without python3.11)
+  when:
+    - not _cassandra_install_check  # deb822_repository needs python3-debian even to compare
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - cassandra_cqlsh_python_repo_uri != ''
+    - "'Candidate: (none)' in cassandra_python311_policy.stdout or cassandra_python311_policy.stdout == ''"
+  block:
+    - name: Install the deadsnakes signing key
+      ansible.builtin.copy:
+        src: deadsnakes.asc
+        dest: /etc/apt/keyrings/deadsnakes.asc
+        mode: "0644"
+
+    - name: Install python3-debian (deb822_repository needs it)
+      ansible.builtin.apt:
+        name: python3-debian
+        state: present
+      retries: 3
+      when: "'python3-debian' not in _cassandra_install_before"
+
+    - name: Add the deadsnakes repository
+      ansible.builtin.deb822_repository:
+        name: deadsnakes
+        types: deb
+        uris: "{{ cassandra_cqlsh_python_repo_uri }}"
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: main
+        signed_by: /etc/apt/keyrings/deadsnakes.asc
+
+    - name: Update the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      retries: 3
+
+- name: Look up python3.11 in the enabled repos (RedHat)
+  ansible.builtin.command:
+    # --check: without the repositories cassandra_repository removes
+    argv: >-
+      {{ ['dnf', '-q', 'repoquery'] + _cassandra_repository_check_removed | default([]) | map('regex_replace', '^', '--disablerepo=') | list
+         + ['python3.11'] }}
+  register: cassandra_python311_query
+  changed_when: false
+  check_mode: false  # read-only
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - "'python3.11' not in _cassandra_install_before"
+    - cassandra_cqlsh_python == ''  # picked by the role, not given
+
+# EL 10: python3 is 3.12, and no python3.11 package exists
+- name: Stop when no repository offers python3.11 (RedHat)
+  ansible.builtin.assert:
+    that: cassandra_python311_query.stdout | trim != ''
+    fail_msg: >-
+      cqlsh of Cassandra {{ cassandra_version }} runs on Python {{ cassandra_cqlsh_python_supported[cassandra_version] | join(' to ') }},
+      python3 on {{ inventory_hostname }} is {{ cassandra_python3_version.stdout | default('') or 'missing' }}, and no
+      repository offers python3.11 to run it with. Install a Python cqlsh supports by other means and set
+      cassandra_cqlsh_python to it, or set cassandra_cqlsh_python_manage to false to leave cqlsh as it is.
+    quiet: true
+  when: cassandra_python311_query is not skipped
+
+# --check: apt can't resolve it before the PPA above is really added; installed already: no dnf call
+# (it would read every repository's metadata, and fail when a mirror is down)
+- name: Install python3.11
+  ansible.builtin.package:
+    name: python3.11
+    state: present
+  retries: 3
+  when:
+    - "'python3.11' not in _cassandra_install_before"
+    - >-
+      not (_cassandra_install_check and ansible_facts['distribution'] == 'Ubuntu' and cassandra_cqlsh_python_repo_uri != ''
+           and cassandra_python311_policy.stdout is not search('Candidate: [0-9]'))

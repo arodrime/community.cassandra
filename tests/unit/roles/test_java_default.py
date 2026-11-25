@@ -114,7 +114,7 @@ def test_the_system_java_is_looked_for_before_both():
     assert look["register"] == "cassandra_java_system_link" and "when" not in look
     assert names.index("Look for the system java") < names.index(
         "Java from a tarball, or already unpacked (cassandra_java_home)") < names.index(BLOCK["name"])
-    assert names.index("Install Java") < names.index("Look for the system java")  # the package's own counts
+    assert names.index("Install the Java package") < names.index("Look for the system java")  # the package's own counts
 
 
 @pytest.mark.parametrize("exists, install_java, home, linked", [

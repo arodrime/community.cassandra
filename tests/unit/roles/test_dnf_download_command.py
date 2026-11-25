@@ -12,7 +12,7 @@ import yaml
 from ansible_collections.community.cassandra.tests.unit.collection_filters import load_collection_filters
 from ansible_collections.community.cassandra.tests.unit.helpers import templar_for, trust_as_template
 
-PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_install", "tasks", "cassandra.yml")
+PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_install", "tasks", "packages_no_java.yml")
 
 
 def _find(tasks, name):

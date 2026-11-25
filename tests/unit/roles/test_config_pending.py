@@ -405,7 +405,7 @@ def test_every_update_of_the_record_goes_through_the_one_helper():
         argv = tasks(name)[0]["ansible.builtin.command"]["argv"]
         assert argv[1] == "-c" and node_program("cassandra_service", tasks(name)[0]) == RECORD
     assert tasks("unit_no_restart.yml")[0]["ansible.builtin.include_tasks"] == "config_record_update.yml"
-    proven = task("action_apply_config.yml", "Record them when they are on disk as planned and that Cassandra still runs")
+    proven = task("apply_config_proven_record.yml", "Record them when they are on disk as planned and that Cassandra still runs")
     assert proven["ansible.builtin.include_role"]["tasks_from"] == "config_record_update.yml"
 
 

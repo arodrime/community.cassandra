@@ -1,0 +1,198 @@
+---
+# (java_check.yml: a Java given by its directory, a tarball, or cassandra_java_link)
+# A Java already there (cassandra_java_home, e.g. imported, or a tarball
+# unpacked on an earlier run) must be that Java: checked before anything
+# changes (upgrade and update_java check it before the node is stopped). Not
+# one this role left half unpacked (a refused tarball): it is unpacked again.
+- name: Look for an unpack left half done
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacking"
+  register: cassandra_java_check_unpacking
+  when: _cassandra_java_home != ''
+
+- name: Check the Java already there is cassandra_java_version
+  ansible.builtin.include_tasks: java_release.yml
+  vars:
+    _cassandra_java_release_of_tarball: "{{ cassandra_java_home == '' }}"
+  when:
+    - _cassandra_java_home != ''
+    - not cassandra_java_check_unpacking.stat.exists
+
+# The unpack empties the Java directory first: one that exists already (e.g.
+# cassandra_java_home or cassandra_java_tarball_dir pointing at /opt or
+# /usr/lib/jvm, or a directory of the same name there) is emptied only when
+# this role made it: its marks (.unpacking, .unpacked), or empty (a run
+# stopped right after making it). A cassandra_java_home with a Java is kept
+# as it is (java_tarball.yml).
+- name: Look for the Java directory
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}"
+  register: cassandra_java_check_dir
+  when: cassandra_java_tarball != ''
+
+# stat does not follow the last link: a cassandra_java_home linked to a Java is found here
+- name: Look for a Java already in cassandra_java_home
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/bin/java"
+  register: cassandra_java_check_java
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_home != ''
+
+- name: Look for the unpacked Java
+  ansible.builtin.stat:
+    path: "{{ _cassandra_java_home }}/.unpacked"
+  register: cassandra_java_check_unpacked
+  when: cassandra_java_tarball != ''
+
+- name: Look for files in the Java directory
+  ansible.builtin.find:
+    paths: "{{ _cassandra_java_home }}"
+    file_type: any
+    hidden: true
+  register: cassandra_java_check_files
+  check_mode: false  # read-only
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_check_dir.stat.isdir | default(false)
+
+- name: The Java directory is new, empty or this role's
+  ansible.builtin.assert:
+    that: >-
+      not cassandra_java_check_dir.stat.exists
+      or cassandra_java_check_java.stat.exists | default(false)
+      or (cassandra_java_check_dir.stat.isdir
+          and (cassandra_java_check_unpacking.stat.exists or cassandra_java_check_unpacked.stat.exists
+               or cassandra_java_check_files.matched | default(1) == 0))
+    fail_msg: >-
+      {{ _cassandra_java_home }} exists on {{ inventory_hostname }} and holds something else than a Java this role
+      unpacked: the tarball is unpacked only into a new or empty directory, which it empties first. Set
+      cassandra_java_home (or cassandra_java_tarball_dir) to another directory, or move that one away.
+    quiet: true
+  when: cassandra_java_tarball != ''
+
+# cassandra_java_link (_cassandra_java_link: without a trailing /): kept pointing at a Java home (java_tarball.yml).
+# Refused before anything changes: no Java home to point at (a Java package), a path that is no place for it (a
+# system directory, the config directory; /usr/lib/jvm/<name>, where Javas are linked, is one), a path there that is not a link, or a link to something else than a Java
+# (no bin/java, no release file in what it leads to; one leading nowhere is made again)
+- name: The Java link is for a Java home
+  ansible.builtin.assert:
+    that:
+      - _cassandra_java_home != ''
+      - _cassandra_java_link is abs
+      - _cassandra_java_link != _cassandra_java_home
+      - not _system | bool
+    fail_msg: >-
+      {{ inventory_hostname }}: cassandra_java_link is {{ cassandra_java_link }}:
+      {{ 'a link is kept pointing at a Java home (cassandra_java_home, or a tarball), and this node has a Java package.'
+         if _cassandra_java_home == ''
+         else ('a system path or the config directory, which the role does not replace with a link.' if _system | bool
+               else 'it must be an absolute path, other than the Java home itself.') }}
+      Nothing was changed. Set cassandra_java_link to the path of a link of its own (e.g. /opt/java/current), or remove
+      it.
+    quiet: true
+  vars:
+    _conf: "{{ cassandra_conf_dir | default('/etc/cassandra') | regex_replace('(?<=.)/+$', '') }}"
+    _system: >-
+      {{ _cassandra_java_link in ['/', '/bin', '/sbin', '/opt', '/usr', '/etc', '/var', '/home', '/root', '/boot', '/dev',
+                                  '/proc', '/sys', '/tmp']
+         or _cassandra_java_link is match('^/(usr/s?bin|etc|bin|sbin)(/|$)')
+         or (_cassandra_java_link is match('^/(usr/)?lib[^/]*(/|$)')
+             and _cassandra_java_link is not match('^/(usr/)?lib(64)?/jvm/[^/]+$'))
+         or _cassandra_java_link == _conf or _cassandra_java_link.startswith(_conf ~ '/') }}
+  when: cassandra_java_link | default('') != ''
+
+- name: Look at the Java link
+  ansible.builtin.shell: |
+    # a link a package owns, or one the alternatives manage (it leads straight into /etc/alternatives, as
+    # /usr/bin/java or /usr/lib/jvm/jre-17): theirs, not moved. A link of its own may lead further through them
+    # package ownership by the exit status: rpm says "not owned" on its standard output, with a failure
+    pkg=
+    if out=$(rpm -qf --qf '%{NAME}\n' "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1); fi
+    if [ -z "$pkg" ] && out=$(dpkg -S "$L" 2>/dev/null); then pkg=$(echo "$out" | head -1 | cut -d: -f1); fi
+    if [ -n "$pkg" ]; then echo "owned by the package $pkg"; exit 0; fi
+    if [ -L "$L" ]; then
+      t=$(readlink "$L")
+      case $t in
+        /*) ;;
+        */*) t=$(cd "${L%/*}/${t%/*}" 2>/dev/null && pwd -P)/${t##*/} ;;
+        *) t=$(cd "${L%/*}/" 2>/dev/null && pwd -P)/$t ;;
+      esac
+      case $t in /etc/alternatives/*) echo "a link of the alternatives (to $t)"; exit 0 ;; esac
+      t=$(readlink -f "$L")
+      if [ -z "$t" ] || [ ! -e "$t" ]; then echo "link leading nowhere"
+      elif [ -x "$t/bin/java" ] || [ -f "$t/release" ]; then echo "link to a Java"
+      else echo "link to $t"; fi
+    elif [ -d "$L" ]; then echo "a directory"
+    elif [ -e "$L" ]; then echo "a file"
+    else echo "absent"; fi
+  environment:
+    L: "{{ _cassandra_java_link }}"
+  register: cassandra_java_check_link
+  changed_when: false
+  check_mode: false  # a read
+  when: cassandra_java_link | default('') != ''
+
+- name: The Java link is a link to a Java, or not there yet
+  ansible.builtin.assert:
+    that: cassandra_java_check_link.stdout in ['absent', 'link leading nowhere', 'link to a Java']
+    fail_msg: >-
+      {{ _cassandra_java_link }} on {{ inventory_hostname }} is {{ cassandra_java_check_link.stdout }}:
+      cassandra_java_link only makes a link of its own, or moves one that leads to a Java (a bin/java or a release
+      file there), not one a package or the alternatives own. Nothing was changed. Set cassandra_java_link to a path of
+      its own (e.g. /opt/java/current), or move that one away.
+    quiet: true
+  when: cassandra_java_link | default('') != ''
+
+# A tarball on the controller is checked against cassandra_java_tarball_checksum before anything changes (a URL is,
+# by get_url, when downloaded); not when that Java is unpacked already, or kept as it is (java_tarball.yml)
+- name: Check the Java tarball on the controller
+  when:
+    - cassandra_java_tarball != ''
+    - cassandra_java_tarball is not match('https?://')
+    - not cassandra_java_check_unpacked.stat.exists | default(false)
+    - not cassandra_java_check_java.stat.exists | default(false) or cassandra_java_check_unpacking.stat.exists | default(false)
+  vars:
+    _algorithm: "{{ cassandra_java_tarball_checksum.split(':', 1)[0] | lower if ':' in cassandra_java_tarball_checksum else '' }}"
+    _sum: "{{ cassandra_java_tarball_checksum.split(':', 1)[1] | default('') | trim | lower }}"
+    _path: "{{ lookup('ansible.builtin.first_found', cassandra_java_tarball, errors='ignore') | default('', true) }}"
+  block:
+    - name: The checksum is <algorithm>:<hex>
+      ansible.builtin.assert:
+        that:
+          - _algorithm in ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512']
+          - _sum is match('^[0-9a-f]+$')
+        fail_msg: >-
+          cassandra_java_tarball_checksum is {{ cassandra_java_tarball_checksum }}:
+          {{ 'a checksum URL is read only for a tarball the nodes download (cassandra_java_tarball a URL); for a file on'
+             ~ ' the controller give the checksum itself' if _sum is match('^[a-z]+://') else 'give' }}
+          as <algorithm>:<hex> (md5, sha1, sha224, sha256, sha384 or sha512), e.g. sha256:0123... Nothing was changed.
+        quiet: true
+      when: cassandra_java_tarball_checksum != ''
+
+    - name: Read the tarball's checksum on the controller
+      ansible.builtin.stat:
+        path: "{{ _path or cassandra_java_tarball }}"
+        get_checksum: "{{ cassandra_java_tarball_checksum != '' }}"
+        checksum_algorithm: "{{ _algorithm or 'sha256' }}"
+      register: cassandra_java_check_tarball
+      delegate_to: localhost
+      become: false  # the controller: no sudo there
+      check_mode: false  # read-only
+      vars:
+        ansible_become: false  # an inventory ansible_become beats the become keyword
+
+    - name: The tarball is there and has that checksum
+      ansible.builtin.assert:
+        that:
+          - cassandra_java_check_tarball.stat.exists and cassandra_java_check_tarball.stat.isreg
+          - cassandra_java_tarball_checksum == "" or cassandra_java_check_tarball.stat.checksum | default("") | lower == _sum
+        fail_msg: >-
+          {{ ('The Java tarball ' ~ cassandra_java_tarball ~ ' is not a file on the controller.')
+             if not (cassandra_java_check_tarball.stat.exists and cassandra_java_check_tarball.stat.isreg)
+             else ('The Java tarball ' ~ (_path or cassandra_java_tarball) ~ ' on the controller has ' ~ _algorithm ~ ' '
+                   ~ cassandra_java_check_tarball.stat.checksum | default("") ~ ', not ' ~ _sum ~ ' (cassandra_java_tarball_checksum).') }}
+          Nothing was changed on {{ inventory_hostname }}. Give the right file or the right checksum (in
+          cassandra_java_tarballs["{{ cassandra_java_version }}"], or cassandra_java_tarball and
+          cassandra_java_tarball_checksum), then run again.
+        quiet: true

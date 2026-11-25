@@ -741,6 +741,7 @@ cassandra_linux_swap_off	both
 cassandra_linux_sysctl	both
 cassandra_linux_sysctl_conf	both
 cassandra_linux_sysctl_file	both
+cassandra_linux_sysctl_read	both
 cassandra_linux_thp_	help
 cassandra_linux_thp_defrag	both
 cassandra_linux_thp_disabled	both

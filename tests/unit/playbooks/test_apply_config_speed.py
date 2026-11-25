@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2026  # +4: apply_config's step lines (run_once: the variables of one node each)
+TASKS_MAX = 2044  # +18: parts of the roles behind one include_tasks (one task when skipped, not each of theirs)
 # +4 (rc3b): apply_config writes the files' diffs next to its report
 
 

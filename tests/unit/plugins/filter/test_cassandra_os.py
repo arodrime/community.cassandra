@@ -1343,3 +1343,119 @@ def test_a_sysctl_key_a_later_file_sets_again_is_not_carried(own):
     # a key of the file no later file sets: still carried
     assert found(site_file_with_a_vendor_override(tail="net.core.somaxconn = 4096\n"), own=own)["vars"][
         "cassandra_linux_sysctl"]["net.core.somaxconn"] == 4096
+
+
+# cassandra_sysctl_todo (cassandra_linux's os.yml): only the keys ansible.posix.sysctl would change are run
+def sysctl_read(own="vm.swappiness=1\n", conf="", live=None, own_real="/etc/sysctl.d/60-cassandra.conf"):
+    import base64
+
+    def b64(text):
+        return "-" if text is None else base64.b64encode(text.encode()).decode()
+    live = {"vm.swappiness": "1"} if live is None else live
+    return (["file|/etc/sysctl.d/60-cassandra.conf|%s|%s" % (own_real, b64(own)),
+             "file|/etc/sysctl.conf|/etc/sysctl.conf|%s" % b64(conf)]
+            + ["live|%s|%s" % (k, b64(v)) for k, v in live.items()])
+
+
+def sysctl_todo(wanted, lines, live=True):
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_os import cassandra_sysctl_todo
+    todo = cassandra_sysctl_todo(wanted, lines, live)
+    return [i["key"] for i in todo["set"]], [i["key"] for i in todo["remove"]]
+
+
+def test_sysctl_keys_already_set_are_not_run():
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read()) == ([], [])
+    # the file written another way, as the module reads it (spaces, a comment, the last line of a key)
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(own="# x\n vm.swappiness = 1 \r\n; y\n")) == ([], [])
+    # the live value split as the module splits it
+    lines = sysctl_read(own="net.ipv4.tcp_rmem=4096 87380 16777216\n", live={"net.ipv4.tcp_rmem": "4096\t87380  16777216\n"})
+    assert sysctl_todo({"net.ipv4.tcp_rmem": "4096 87380 16777216"}, lines) == ([], [])
+
+
+@pytest.mark.parametrize("own,live,is_live", [
+    ("vm.swappiness=10\n", "1", True),  # the file differs
+    ("", "1", True),  # not in the file
+    ("vm.swappiness=1\n", "10", True),  # the live value differs
+    ("vm.swappiness=1\n", None, True),  # the live value not read
+    ("vm.swappiness = 1 \nvm.swappiness=1\n", "1", True),  # two lines: a write of another key keeps the first only
+])
+def test_sysctl_keys_the_module_would_change_are_run(own, live, is_live):
+    lines = sysctl_read(own=own, live={"vm.swappiness": live})
+    assert sysctl_todo({"vm.swappiness": 1}, lines, is_live)[0] == ["vm.swappiness"]
+
+
+def test_sysctl_live_values_not_compared_when_not_set_live():
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(live={"vm.swappiness": "60"}), live=False) == ([], [])
+
+
+def test_sysctl_value_read_as_the_module_reads_it():
+    # yes/true/on: 1 for the module, whatever the file says
+    assert sysctl_todo({"vm.swappiness": "yes"}, sysctl_read(own="vm.swappiness=yes\n"))[0] == ["vm.swappiness"]
+    assert sysctl_todo({"vm.swappiness": True}, sysctl_read(own="vm.swappiness=1\n")) == ([], [])
+    assert sysctl_todo({"vm.swappiness": " 1 "}, sysctl_read()) == ([], [])
+
+
+@pytest.mark.parametrize("lines", [
+    [],  # not read
+    sysctl_read(own=None),  # a file not read
+    sysctl_read()[:1],  # a record missing
+    ["file|/etc/sysctl.d/60-cassandra.conf|x|%%%", sysctl_read()[1]],  # not base64
+])
+def test_every_sysctl_key_run_when_something_was_not_read(lines):
+    assert sysctl_todo({"vm.swappiness": 1}, lines) == (["vm.swappiness"], ["vm.swappiness"])
+
+
+def test_sysctl_keys_removed_from_sysctl_conf_only_when_there():
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(conf="vm.swappiness=60\n"))[1] == ["vm.swappiness"]
+    # no value: the module leaves it
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(conf="vm.swappiness=\n# vm.swappiness=60\n"))[1] == []
+    # two lines of another key: the first removal rewrites the file, the next ones read what it left
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(conf="a=1\na=2\n"))[1] == ["vm.swappiness"]
+    # the role's file is /etc/sysctl.conf itself (a link): what the set loop writes, the removal loop removes
+    assert sysctl_todo({"vm.swappiness": 1}, sysctl_read(own_real="/etc/sysctl.conf"))[1] == ["vm.swappiness"]
+    # a key the shell or the module would read otherwise: run
+    assert sysctl_todo({"vm swappiness": 1}, sysctl_read(own="vm swappiness=1\n", live={"vm swappiness": "1"})) == (
+        ["vm swappiness"], ["vm swappiness"])
+
+
+def test_os_yml_runs_the_sysctl_keys_to_change_only():
+    with open(os.path.join(ROLES, "cassandra_linux", "tasks", "os.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+    by_name = {t.get("name"): t for t in tasks}
+    assert by_name["Kernel settings for Cassandra"]["loop"].endswith("cassandra_sysctl_todo(_read, _cassandra_linux_live)).set }}")
+    assert by_name["Remove the same settings from /etc/sysctl.conf"]["loop"].endswith(").remove }}")
+    read = by_name["Read the kernel settings files and values"]
+    assert read["check_mode"] is False and read["failed_when"] is False
+
+
+def test_sysctl_keys_after_one_set_live_are_run():
+    # (audit) writing net.ipv6.conf.all.disable_ipv6 live changes lo's: the module reads lo again at its item
+    own = "net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.lo.disable_ipv6=0\n"
+    lines = sysctl_read(own=own, live={"net.ipv6.conf.all.disable_ipv6": "0", "net.ipv6.conf.lo.disable_ipv6": "0"})
+    wanted = {"net.ipv6.conf.all.disable_ipv6": 1, "net.ipv6.conf.lo.disable_ipv6": 0}
+    assert sysctl_todo(wanted, lines)[0] == list(wanted)
+    assert sysctl_todo(wanted, lines, live=False)[0] == []  # (the files only: nothing written live)
+    assert sysctl_todo(dict(reversed(list(wanted.items()))), lines)[0] == ["net.ipv6.conf.all.disable_ipv6"]
+
+
+def test_a_sysctl_key_without_a_value_is_run():
+    # the module refuses it: the run says so, as before
+    assert sysctl_todo({"vm.swappiness": ""}, sysctl_read(own="vm.swappiness=\n"), live=False)[0] == ["vm.swappiness"]
+    assert sysctl_todo({"vm.swappiness": None}, sysctl_read(own="vm.swappiness=\n"), live=False)[0] == ["vm.swappiness"]
+
+
+def test_a_file_whose_real_path_was_not_read_runs_every_key():
+    lines = sysctl_read()
+    lines[0] = lines[0].replace("|/etc/sysctl.d/60-cassandra.conf|", "||", 1).replace("file||", "file|/etc/sysctl.d/60-cassandra.conf||")
+    assert sysctl_todo({"vm.swappiness": 1}, lines) == (["vm.swappiness"], ["vm.swappiness"])
+
+
+@pytest.mark.parametrize("wanted", [
+    {"vm.x=y": 1, "vm.x": 1},  # (2nd audit) the module writes vm.x=y=1: vm.x read as y=1 at the next item
+    {"vm.a": "1\nvm.x=5", "vm.x": 1},  # a value that writes another line
+    {"vm.x": 5, " vm.x": 1},  # the same key twice
+    {"vm.x": "[1,2]"},  # templating makes it another value
+])
+def test_every_sysctl_key_run_when_a_write_may_change_what_was_read(wanted):
+    lines = sysctl_read(own="vm.x=1\nvm.a=1\n", live={})
+    assert sysctl_todo(wanted, lines, live=False)[0] == list(wanted)

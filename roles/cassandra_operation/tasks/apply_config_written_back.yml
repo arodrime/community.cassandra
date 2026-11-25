@@ -1,0 +1,57 @@
+---
+# (action_apply_config.yml: files written back, no restart, not --check)
+- name: Load the cassandra_service defaults (the conf dir)
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_service
+    tasks_from: defaults.yml
+    public: true
+
+- name: Checksum the files written back
+  ansible.builtin.stat:
+    path: "{{ _cassandra_service_conf_dir }}/{{ item }}"
+    checksum_algorithm: sha1
+    get_mime: false
+    get_attributes: false
+  loop: "{{ cassandra_apply_config_as_started.files }}"
+  register: cassandra_apply_config_written_back
+
+- name: Read the running Cassandra once written
+  ansible.builtin.include_role:
+    name: community.cassandra.cassandra_config
+    tasks_from: jvm_started.yml
+
+- name: Stop if one differs from what Cassandra started with
+  ansible.builtin.assert:
+    that:
+      - _differ | length == 0
+      - cassandra_jvm.pid | default('') | string == cassandra_apply_config_as_started.pid | string
+      - (cassandra_jvm.start | default(0) | float - cassandra_apply_config_as_started.start | float) | abs < 2
+    fail_msg: >-
+      {{ _what }} (the plan said no restart): {{ ("restart it so that it runs with the inventory's config: " ~ _restart)
+      if cassandra_jvm.pid is defined else 'start Cassandra on it with start_rack (which checks the start first): '
+      ~ _start ~ '; then run apply_config again' }}
+    quiet: true
+  vars:
+    _what: >-
+      {{ (_differ | join(', ') ~ ' written with another content than the running Cassandra started with')
+         if _differ else ('Cassandra restarted or stopped while ' ~ cassandra_apply_config_as_started.files | join(', ')
+                          ~ (' were' if cassandra_apply_config_as_started.files | length > 1 else ' was') ~ ' written back') }}
+    # start_rack on this node alone (without --limit, every stopped node of its rack)
+    _start: >-
+      {{ 'start_rack' | community.cassandra.cassandra_command(inventory=ansible_inventory_sources,
+           default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'), hosts=cassandra_hosts | default(''),
+           limit=inventory_hostname, cwd=lookup('ansible.builtin.env', 'PWD'),
+           extra={'cassandra_target_dc': _cassandra_preflight.cassandra_dc | default(cassandra_dc),
+                  'cassandra_target_rack': _cassandra_preflight.cassandra_rack | default(cassandra_rack)}) }}
+    _restart: >-
+      {{ 'rolling_restart' | community.cassandra.cassandra_command(inventory=ansible_inventory_sources,
+           default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'), hosts=cassandra_hosts | default(''),
+           limit=inventory_hostname, cwd=lookup('ansible.builtin.env', 'PWD')) }}
+    _differ: >-
+      {%- set out = [] -%}
+      {%- for r in cassandra_apply_config_written_back.results -%}
+      {%-   if r.stat.checksum | default('') != cassandra_apply_config_as_started.sha1[r.item] -%}
+      {%-     set _ = out.append(r.item) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}

@@ -158,9 +158,8 @@
     - name: Assert time sync was not touched
       ansible.builtin.assert:
         that:
-          - cassandra_timesync_install is skipped
-          # not even registered in the idempotence run (molecule-idempotence-notest)
-          - "cassandra_timesync_service_result | default({'skipped': true}) is skipped"
+          # (its tasks not run: what the runs above registered stays, nothing reported from it)
+          - _cassandra_linux_items | selectattr('timesync', 'defined') | list | length == 0
 
     - name: Run cassandra_linux offline (time sync installed by the runs above)
       ansible.builtin.include_role:
