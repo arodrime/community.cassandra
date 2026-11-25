@@ -523,7 +523,7 @@ def test_apply_config_recap():
         "  at once: node1, node4",
         "  one node at a time, the cluster checked before and after each: node2",
         "  Cassandra restarted: node2",
-        "  no restart on node1, node4: the running Cassandra keeps what it read until its next restart",
+        "  no restart (node1, node4): the running Cassandra keeps what it read until its next restart",
         "  node2  would apply, then restart",
         "    restart pending (jvm11-server.options changed since the running Cassandra started)",
         "  node1  would apply, no restart",

@@ -933,16 +933,22 @@ PHASES = {
 }
 
 
+# the phases whose nodes are a set, not a run's order (the inventory's order means nothing there): sorted naturally
+SET_PHASES = ("import_given",)
+
+
 def phase(name, names=None, node="", what="", count=None):
     """The phase line PHASES[name], e.g. "Decommissioning node3...". names:
-    the nodes (one or a list, shown as nodes() does, sorted naturally);
+    the nodes (one or a list, shown as nodes() does, in the order given: the run's, e.g. restart_rack's; sorted
+    naturally for SET_PHASES);
     count: how many nodes (the number of names when not given). "" for a
     name PHASES does not have (a step that says nothing)."""
     if name not in PHASES:
         return ""
     names = [names] if isinstance(names, str) else list(names or [])
     number = len(names) if count is None else int(count)
-    return PHASES[name].format(nodes=nodes(names), node=node, what=what, count=plural(number, "node"))
+    return PHASES[name].format(nodes=nodes(names, keep_order=name not in SET_PHASES), node=node, what=what,
+                               count=plural(number, "node"))
 
 
 def check_what(present, kind="", targets=None, replacing="", run=None, absent=None):

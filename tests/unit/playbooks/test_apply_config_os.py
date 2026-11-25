@@ -239,7 +239,8 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
 @pytest.mark.parametrize("nodes, said", [
     ([dict(todo=True, then="restart")], ["one node at a time, the cluster checked before and after each: n1",
                                          "Cassandra restarted: n1"]),
-    ([dict(todo=False, os=True, then="none")], ["at once: n1"]),  # (live OS settings: no JVM line)
+    # (live OS settings only: no JVM line, but no restart said: audit round 2)
+    ([dict(todo=False, os=True, then="none")], ["at once: n1", "no restart: the OS settings applied live"]),
     ([dict(todo=True, then="none")], ["at once: n1", "no restart: the running Cassandra keeps what it read until its"
                                                      " next restart"]),
     # a start is one node at a time too, never "at once"; a Cassandra stopped and left so: said, no JVM line
@@ -253,9 +254,12 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
     # (audit 2026-11-25) a mixed plan names the nodes with no restart, an OS change on one hides it for no other
     ([dict(todo=True, then="restart"), dict(todo=True, then="none")],
      ["at once: n2", "one node at a time, the cluster checked before and after each: n1", "Cassandra restarted: n1",
-      "no restart on n2: the running Cassandra keeps what it read until its next restart"]),
+      "no restart (n2): the running Cassandra keeps what it read until its next restart"]),
     ([dict(todo=True, then="none", os=True), dict(todo=True, then="none")],
-     ["at once: n1, n2", "no restart on n2: the running Cassandra keeps what it read until its next restart"])])
+     ["at once: n1, n2", "no restart: the running Cassandra keeps what it read until its next restart"]),
+    ([dict(todo=True, then="none"), dict(todo=False, os=True, then="none")],
+     ["at once: n1, n2", "no restart (n1): the running Cassandra keeps what it read until its next restart",
+      "no restart (n2): the OS settings applied live"])])
 def test_what_happens_says_the_order(nodes, said):
     # (2026-11-25) WHAT HAPPENS, before the question and in the --check recap: at once or one node at a time, the
     # restarts, and that a running Cassandra keeps what it read when none

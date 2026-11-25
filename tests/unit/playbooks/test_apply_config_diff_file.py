@@ -22,8 +22,13 @@ def run(tmp_path, path):
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost", "gather_facts": False,
         "vars": {"cassandra_apply_config_diff_text": "== jvm-server.options  on node1\n-a\n+b",
-                 "cassandra_apply_config_diff_path": str(path)},
-        "tasks": [WRITE]}]))
+                 "cassandra_apply_config_diff_path": str(path),
+                 "cassandra_apply_config_diff": ["WILL CHANGE", "  jvm-server.options  rewritten",
+                                                 "      (24 more lines: see",
+                                                 "        reports/prod/" + path.name + ")",
+                                                 "real diffs: reports/prod/" + path.name]},
+        "tasks": [WRITE, {"name": "Show the view", "ansible.builtin.debug": {
+            "msg": "VIEW {{ cassandra_apply_config_diff | to_json }}"}}]}]))
     args = ["-c", "local", "-i", "localhost,", "-e", "ansible_python_interpreter=" + sys.executable, "--check",
             playbook]
     return run_playbook(args, dict(ANSIBLE_LOCALHOST_WARNING="0"), cwd=tmp_path)
@@ -46,3 +51,7 @@ def test_a_diff_file_not_written_is_said(tmp_path):
     assert rc == 0, output
     assert "WARNING  the files' diffs of this run were not written" in output, output
     assert not path.exists()
+    # (audit round 2) the view names no file that is not there
+    assert 'VIEW [\\"WILL CHANGE\\", \\"  jvm-server.options  rewritten\\", \\"      (24 more lines not shown)\\"]' \
+        in output or 'VIEW ["WILL CHANGE", "  jvm-server.options  rewritten", "      (24 more lines not shown)"]' \
+        in output, output

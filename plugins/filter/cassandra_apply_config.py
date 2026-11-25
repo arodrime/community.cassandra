@@ -940,13 +940,18 @@ def _happens_facts(nodes):
         lines.append("Cassandra started (not running now): %s" % out.nodes(starts, all_nodes=every))
     if stopped:
         lines.append("Cassandra stopped, left stopped: %s" % out.nodes(stopped, all_nodes=every))
-    # (the nodes written at once with Cassandra running and no OS change: named unless they are all the nodes to do)
-    os_nodes = [str(n["name"]) for n in todo if n.get("os")]
-    kept = [n for n in at_once if n not in stopped and n not in os_nodes]
+    # (the nodes done at once with Cassandra running: the ones with config written keep what they read, the ones
+    # with live OS settings only get them live; named unless they are all the nodes to do)
+    config = [str(n["name"]) for n in todo if n.get("todo")]
+    kept = [n for n in at_once if n not in stopped and n in config]
+    live = [n for n in at_once if n not in stopped and n not in config]
     if kept and len(kept) == len(todo):
         lines.append(NO_RESTART_FACT)
     elif kept:
-        lines.append("no restart on %s: %s" % (out.nodes(kept, all_nodes=every), NO_RESTART_FACT[len("no restart: "):]))
+        lines.append("no restart (%s): %s" % (out.nodes(kept, all_nodes=every), NO_RESTART_FACT[len("no restart: "):]))
+    if live:
+        lines.append("no restart%s: the OS settings applied live" % (
+            "" if len(live) == len(todo) else " (%s)" % out.nodes(live, all_nodes=every)))
     return lines
 
 

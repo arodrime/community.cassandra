@@ -1291,6 +1291,14 @@
           vars:
             cassandra_output: true
 
+        # (the view names a file that is not there: its lines naming it dropped, the diffs on screen cut short)
+        - name: Name no diffs file in the view
+          ansible.builtin.set_fact:
+            cassandra_apply_config_diff: >-
+              {{ cassandra_apply_config_diff | reject('search', '^ *real diffs: ')
+                 | reject('search', (cassandra_apply_config_diff_path | basename | regex_escape) ~ '[)]?$')
+                 | map('regex_replace', '^( *[(][0-9]+ more lines): see.*$', '\1 not shown)') | list }}
+
     - name: Group the nodes to do
       ansible.builtin.group_by:
         key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"

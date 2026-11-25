@@ -126,12 +126,14 @@ def test_no_diff_file_named_when_none_is_written(tmp_path):
 
 
 def test_a_long_diff_line_is_cut_to_79_columns(tmp_path):
-    # (audit 2026-11-25, owner's rule) a diff line on the screen fits in 79 columns: cut, " \" at the end of each
-    # part but the last; the .diff file has it whole
+    # (audit 2026-11-25, owner's rule) a diff line on the screen fits in 79 columns: cut, its next parts on lines
+    # starting with "|" where a diff line has its +, - or space (round 2: a mark at the end would read as a shell
+    # line's own continuation " \"); the .diff file has it whole
     long_option = "-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/a/very/long/path/to/jmxremote.password"
-    node = Node(tmp_path, "n1", files={"jvm-server.options": JVM + long_option + "\n"})
+    node = Node(tmp_path, "n1", files={"jvm-server.options": JVM + long_option + " \\\n"})
     lines = changes(node, show_diff=True)
     assert [line for line in lines if len(line) > 79] == [], lines
-    cut = [i for i, line in enumerate(lines) if line.endswith(" \\")]
-    assert cut and long_option.endswith(lines[cut[-1] + 1].strip())
-    assert ("-" + long_option) in cassandra_apply_config_diff_text([node.data()], "c").split("\n")
+    at = next(i for i, line in enumerate(lines) if line.startswith("      -" + long_option[:30]))
+    assert lines[at + 1].startswith("      |")
+    assert (lines[at][len("      "):] + lines[at + 1][len("      |"):]).endswith(long_option + " \\")
+    assert ("-" + long_option + " \\") in cassandra_apply_config_diff_text([node.data()], "c").split("\n")

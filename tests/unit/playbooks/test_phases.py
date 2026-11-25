@@ -58,6 +58,8 @@ def test_the_words():
     # sorted the natural way, runs merged (2026-11-25: import_cluster's line listed the nodes as the inventory has them)
     given = ["node%02d" % i for i in (9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4, 5, 6, 7, 8)]
     assert out.phase("import_given", given) == "Reading the ring from 16 nodes: node01..node16..."
+    # a run's order kept (audit round 2): restart_rack's nodes as it restarts them
+    assert out.phase("restart_rack", ["node3", "node1", "node2"], what="rack dc1/r1").count("node3, node1, node2") == 1
     # each one in the ops callback's phase colour, a line of its own
     for name in out.PHASES:
         line = out.phase(name, ["node1"], node="node1", what="x", count=1)
