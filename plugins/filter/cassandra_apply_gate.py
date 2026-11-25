@@ -9,6 +9,7 @@ the series, the AxonOps agent cassandra-env.sh loads).
 cassandra_config_user_files, cassandra_config_user_request: the files of the users' ~/.cassandra cassandra_config
 writes, and its plan's request to compare them on the node.
 cassandra_check_groups: the nodes whose cassandra_config checks read the same values, checked once.
+cassandra_apply_resume_refusal: a resume with other parts than the interrupted run's, refused.
 cassandra_apply_gate_lines: the lines the report of the run says of the compare: the nodes whose config the
 cassandra_config plan found unchanged (the rest of the role not run there), the parts left out.
 """
@@ -16,6 +17,7 @@ cassandra_config plan found unchanged (the rest of the role not run there), the 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
 import textwrap
 
 # the parts of a run, in the order the compare looks at them
@@ -32,50 +34,77 @@ def _names(value):
     return [str(item).strip() for item in items if str(item).strip()]
 
 
-def cassandra_apply_only(value):
-    """value: -e apply_only (a comma-separated string, a list; '' or None: every part) -> {parts, left_out, refused}:
-    the parts compared and applied (config and unit always), those left out, both in the order of PARTS; refused:
-    the lines of the refusal ([] when every name is a part and config is among them).
+def cassandra_apply_only(value, command=""):
+    """value: -e apply_only (a comma-separated string, a list; '', None or all: every part); command: the command of
+    this run (cassandra_command, without apply_only) -> {parts, left_out, refused}: the parts compared and applied
+    (config and unit always), those left out, both in the order of PARTS; refused: the lines of the refusal ([] when
+    every name is a part and config is among them), its way out the command with the parts given, config first.
     Example: "config,linux" -> {"parts": ["config", "unit", "linux"], "left_out": ["java", "install", ...],
     "refused": []}."""
     names = _names(value)
-    if not names:
+    if not names or names == ["all"]:  # (all: every part, as without apply_only; said so to resume a run)
         return {"parts": list(PARTS), "left_out": [], "refused": []}
     unknown = [n for n in names if n not in PARTS]
-    # (the way out: the names given that are parts, config first)
-    way_out = "WAY OUT  -e apply_only=%s" % ",".join(["config"] + [n for n in PARTS if n in names and n != "config"])
+    way_out = ["WAY OUT  run:", "  %s -e apply_only=%s" % (
+        command or "ansible-playbook community.cassandra.apply_config",
+        ",".join(["config"] + [n for n in PARTS if n in names and n != "config"]))]
     if unknown:
         refused = ["apply_only: %s: not a part of apply_config" % ", ".join(unknown),
-                   "its parts: %s" % ", ".join(PARTS), way_out]
+                   "its parts: %s" % ", ".join(PARTS)] + way_out
     elif "config" not in names:
         refused = ["apply_only: %s: config is not among them" % ", ".join(names),
-                   "config is always compared: the restart decision reads it", way_out]
+                   "config is always compared: the restart decision reads it"] + way_out
     else:
         refused = []
     parts = [p for p in PARTS if p in names or p in ALWAYS]
     return {"parts": parts, "left_out": [p for p in PARTS if p not in parts], "refused": refused}
 
 
-def cassandra_apply_only_stops(names, hostvars, parts):
+def _on(value):
+    return str(value).lower() in ("true", "yes", "1", "on")
+
+
+def cassandra_apply_only_stops(names, hostvars, parts, command=""):
     """names: the nodes of the run; hostvars: their variables (cassandra_apply_config_version: a newer release of the
-    series to install when its kind is release; cassandra_axonops_enabled); parts: the run's (cassandra_apply_only) ->
-    the lines of the refusal, [] when the parts cover them: the release is installed by install, and cassandra-env.sh
-    loads the AxonOps agent its part installs."""
-    release, axonops = [], []
-    for name in names:
-        node = hostvars[name]
-        if (node.get("cassandra_apply_config_version") or {}).get("kind") == "release":
-            release.append(name)
-        if str(node.get("cassandra_axonops_enabled", False)).lower() in ("true", "yes", "1", "on"):
-            axonops.append(name)
-    refused = []
-    if release and "install" not in parts:
-        refused += ["%s: a newer release of its series to install: apply_only leaves install out" % ", ".join(release),
-                    "WAY OUT  add install to apply_only, or run without apply_only"]
-    if axonops and "axonops" not in parts:
-        refused += ["%s: cassandra-env.sh loads the AxonOps agent: apply_only leaves axonops out" % ", ".join(axonops),
-                    "WAY OUT  add axonops to apply_only, or run without apply_only"]
+    series to install when its kind is release; cassandra_axonops_enabled; cassandra_java_plan_todo: the node moves to
+    another Java); parts: the run's (cassandra_apply_only); command: the command of this run, without apply_only ->
+    the lines of the refusal, [] when the parts cover them: the release is installed by install, cassandra-env.sh
+    loads the AxonOps agent its part installs, the Java move is java's. Its way out: the command with those parts too."""
+    needed = (("install", "a newer release of its series to install",
+               lambda node: (node.get("cassandra_apply_config_version") or {}).get("kind") == "release"),
+              ("axonops", "cassandra-env.sh loads the AxonOps agent", lambda node: _on(node.get("cassandra_axonops_enabled"))),
+              ("java", "another Java to move to (cassandra_java_version)", lambda node: _on(node.get("cassandra_java_plan_todo"))))
+    refused, more = [], []
+    for part, why, needs in needed:
+        nodes = [name for name in names if needs(hostvars[name])]
+        if nodes and part not in parts:
+            refused.append("%s: %s: apply_only leaves %s out" % (", ".join(nodes), why, part))
+            more.append(part)
+    if refused:
+        refused += ["WAY OUT  run with those parts too:", "  %s -e apply_only=%s" % (
+            command or "ansible-playbook community.cassandra.apply_config",
+            ",".join(p for p in PARTS if p in parts or p in more))]
     return refused
+
+
+def cassandra_apply_resume_refusal(resumed, recorded, current, resume_command, over_command):
+    """A resume (-e cassandra_rolling_resume=true) of apply_config with other parts than the interrupted run's ->
+    the lines of its refusal, [] when it may go on. resumed: the progress file it resumes; recorded: the parts the
+    interrupted run applied ('' not recorded: an earlier version's run, or one stopped before; all: every part);
+    current: this run's (all: every part, '': no -e apply_only given); resume_command: the command that resumes with
+    the parts recorded (<parts> when none); over_command: the one that starts over."""
+    if not recorded:
+        if current:  # (given with apply_only: the operator says which)
+            return []
+        return ["%s: the parts the interrupted run applied are not recorded" % os.path.basename(resumed),
+                "WAY OUT  resume giving them (all: every part):", "  " + resume_command,
+                "WAY OUT  or start over without resuming:", "  " + over_command]
+    if recorded == (current or "all"):
+        return []
+    said = lambda parts: "every part" if parts == "all" else "apply_only=" + parts  # noqa: E731
+    return ["the interrupted run applied " + said(recorded), "this one: " + said(current or "all"),
+            "a resumed run applies the parts the interrupted one did", "WAY OUT  resume with them:",
+            "  " + resume_command]
 
 
 def cassandra_apply_gate_lines(gates, left_out=None, full=False, verify=False):
@@ -143,6 +172,7 @@ class FilterModule(object):
             "cassandra_apply_only": cassandra_apply_only,
             "cassandra_apply_only_stops": cassandra_apply_only_stops,
             "cassandra_apply_gate_lines": cassandra_apply_gate_lines,
+            "cassandra_apply_resume_refusal": cassandra_apply_resume_refusal,
             "cassandra_check_groups": cassandra_check_groups,
             "cassandra_config_user_files": cassandra_config_user_files,
             "cassandra_config_user_request": cassandra_config_user_request,

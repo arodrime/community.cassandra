@@ -152,9 +152,14 @@
 
     - name: Stop when the users' files could not be compared
       ansible.builtin.fail:
-        msg: "{{ inventory_hostname }}: the users' ~/.cassandra files could not be compared: {{ _read.error }}"
+        msg: "{{ ('cassandra_config  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
       vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _read: "{{ cassandra_config_users_read.stdout | from_json }}"
+        _said:
+          - "the users' ~/.cassandra files (cqlsh, nodetool) could not be compared: {{ _read.error }}"
+          - "WAY OUT  fix what it says on {{ inventory_hostname }} (the users of cassandra_cqlsh_credentials, their home), then run again"
       when: _read.error is defined
 
     # (said as the JMX files are: written whole, never their content)

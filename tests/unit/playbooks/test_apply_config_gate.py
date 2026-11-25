@@ -20,7 +20,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_gate import (
     PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops, cassandra_check_groups,
-    cassandra_config_user_files, cassandra_config_user_request)
+    cassandra_apply_resume_refusal, cassandra_config_user_files, cassandra_config_user_request)
 from ansible_collections.community.cassandra.tests.unit.helpers import TOP, render
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 
@@ -46,8 +46,8 @@ NEVER = {
 WRITES = {
     "Look for the AxonOps Java agent's options file": "read",
     "Record the ones not written since it started": "check mode",
-    "Seed the alternative conf dir from the one in use": "files",  # (a conf dir that moves: every file written)
-    "Select the alternative conf dir": "files",
+    "Seed the alternative conf dir from the one in use": "conf directory",
+    "Select the alternative conf dir": "conf directory",
     "Template Cassandra config files": "files",
     "Set the owner and mode of the files left as they are": "owner, group, mode",
     "Add the role's header line to the files left as they are": "header",
@@ -242,6 +242,12 @@ def verdict(**changed):
       "_cassandra_config_jmx_changes": [], "cassandra_config_jmx_header": {"stdout": '[{"file": "jmxremote.access"}]'}},
      ["JMX files"]),
     ({"cassandra_prometheus_exporter_enabled": True}, ["exporter"]),
+    # audit B3: the conf dir switched, every file kept (its item said by confirm.yml)
+    ({"cassandra_config_conf_target": {"stat": {"lnk_source": "/etc/cassandra/default.conf"}},
+      "cassandra_rpm_conf_alternative": "/etc/cassandra/ansible.conf"}, ["conf directory"]),
+    ({"cassandra_config_conf_target": {"stat": {"lnk_source": "/etc/cassandra/ansible.conf"}},
+      "cassandra_rpm_conf_alternative": "/etc/cassandra/ansible.conf"}, []),
+    ({"cassandra_config_conf_target": {"skipped": True}, "cassandra_rpm_conf_alternative": ""}, []),
     ({"cassandra_config_exporter_unused": {"skipped": True}}, ["exporter"]),  # (a run that writes: read later)
     ({"cassandra_config_exporter_unused": {"stdout_lines": ["kept|cassandra-env.sh|conf"]}}, ["exporter"]),
 ])
@@ -282,10 +288,12 @@ def test_the_other_compares_follow_apply_only():
     play = find_play(PLAYBOOK, "Find what each node needs")
     assert "'linux' in _cassandra_apply_parts.parts" in str(find_task(play, "Compare the OS settings")["when"])
     assert "'medusa' in _cassandra_apply_parts.parts" in find_task(play, "Compare Medusa")["when"]
-    assert "'java' in _cassandra_apply_parts.parts" in find_task(play, "Work out the Java of the nodes running another one")["when"]
-    # (java left out: the running JVM read all the same, the unit's read and the restart pending need it)
-    jvm = find_task(play, "Find the running Cassandra")
-    assert jvm["when"] == "'java' not in _cassandra_apply_parts.parts"
+    # (audit C10: the Java plan read whatever apply_only says: a move with java left out stops, below)
+    java = find_task(play, "Work out the Java of the nodes running another one")
+    assert "when" not in java
+    names = [t.get("name") for t, dummy in walk(play["tasks"])]
+    assert names.index(java["name"]) < names.index("Refuse to leave out a part a node needs") < names.index(
+        "Write the JMX password file where it is missing or other")
     task = find_task(play, "Compare the repository, the packages and the firewall")
 
     def roles(given, **variables):
@@ -314,26 +322,26 @@ def test_apply_only_gives_the_parts(given, parts, left_out):
 
 
 def test_apply_only_refuses_an_unknown_part_or_no_config():
-    said = cassandra_apply_only("config,linus")["refused"]
-    assert said[0] == "apply_only: linus: not a part of apply_config"
-    assert said[1] == "its parts: " + ", ".join(PARTS)
-    assert said[2] == "WAY OUT  -e apply_only=config"
-    said = cassandra_apply_only("linux")["refused"]
-    assert said[0] == "apply_only: linux: config is not among them"
-    assert said[-1] == "WAY OUT  -e apply_only=config,linux"
-    assert all(len(line) <= 77 for line in said)  # (indented 2 in the refusal)
+    said = cassandra_apply_only("config,linus", "ansible-playbook -i inv community.cassandra.apply_config --check")["refused"]
+    assert said == ["apply_only: linus: not a part of apply_config", "its parts: " + ", ".join(PARTS), "WAY OUT  run:",
+                    "  ansible-playbook -i inv community.cassandra.apply_config --check -e apply_only=config"]
+    said = cassandra_apply_only("linux", "CMD")["refused"]
+    assert said == ["apply_only: linux: config is not among them",
+                    "config is always compared: the restart decision reads it", "WAY OUT  run:",
+                    "  CMD -e apply_only=config,linux"]
+    assert cassandra_apply_only("all") == cassandra_apply_only("")  # (to resume a run of every part)
 
 
 def test_apply_only_refuses_to_leave_out_what_a_node_needs():
     hostvars = {"n1": {"cassandra_apply_config_version": {"kind": "release"}},
                 "n2": {"cassandra_apply_config_version": {"kind": ""}, "cassandra_axonops_enabled": True},
-                "n3": {"cassandra_axonops_enabled": "false"}}
-    assert cassandra_apply_only_stops(list(hostvars), hostvars, list(PARTS)) == []
-    said = cassandra_apply_only_stops(list(hostvars), hostvars, ["config", "unit"])
+                "n3": {"cassandra_axonops_enabled": "false", "cassandra_java_plan_todo": True}}
+    assert cassandra_apply_only_stops(list(hostvars), hostvars, list(PARTS), "CMD") == []
+    said = cassandra_apply_only_stops(list(hostvars), hostvars, ["config", "unit", "linux"], "CMD")
     assert said == ["n1: a newer release of its series to install: apply_only leaves install out",
-                    "WAY OUT  add install to apply_only, or run without apply_only",
                     "n2: cassandra-env.sh loads the AxonOps agent: apply_only leaves axonops out",
-                    "WAY OUT  add axonops to apply_only, or run without apply_only"]
+                    "n3: another Java to move to (cassandra_java_version): apply_only leaves java out",  # (audit C10)
+                    "WAY OUT  run with those parts too:", "  CMD -e apply_only=config,unit,java,linux,install,axonops"]
 
 
 def test_the_report_says_the_compare_in_one_line():
@@ -527,9 +535,14 @@ def test_a_users_file_to_write_schedules_the_node():
 
 def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     play = find_play(PLAYBOOK, "Set up the progress file")
-    record = find_task(play, "Record the parts of the run with its progress file")
-    names = [t["name"] for t in play["tasks"]]
-    assert names.index("Set up the progress file") < names.index(record["name"])
+    setup = find_task(play, "Set up the progress file")
+    assert render(setup["vars"]["_cassandra_progress_parts"], _cassandra_apply_parts=cassandra_apply_only("config,linux")) == (
+        "config,unit,linux")
+    progress = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "progress.yml"))
+    names = [t["name"] for t, dummy in walk(progress)]
+    # audit B5: written first, with the progress file
+    assert names.index("Record what the run applies with the progress file") < names.index("Create the progress file")
+    record = find_task(progress, "Record what the run applies with the progress file")
     find = find_play(PLAYBOOK, "Find what each node needs")
     refuse = find_task(find, "Refuse to resume with other parts than the interrupted run")
     pick = find_task(find, "Find the progress file a resume picks")
@@ -538,9 +551,10 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     parts = cassandra_apply_only("config,linux")
     assert render(record["ansible.builtin.copy"]["dest"], cassandra_progress_file=str(done)) == str(
         tmp_path / "c-apply_config-20261125T120000.parts")
-    assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=parts) == "config,unit,linux\n"
-    assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=cassandra_apply_only("")) == "all\n"
-    assert "not cassandra_rolling_resume | default(false) | bool" in record["when"]
+    assert render(record["ansible.builtin.copy"]["content"], _cassandra_progress_parts="config,unit,linux") == (
+        "config,unit,linux\n")
+    assert "not _progress_resuming | bool" in record["when"]
+    del parts
     found = {"files": [{"path": str(tmp_path / "old.done"), "mtime": 1}, {"path": str(done), "mtime": 2}]}
     assert render(refuse["vars"]["_resumed"], cassandra_progress_found=found) == str(done)
     assert render(refuse["vars"]["_resumed"], cassandra_progress_found={"skipped": True}) == ""
@@ -548,15 +562,22 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     def said(given, recorded):
         if recorded is not None:
             (tmp_path / "c-apply_config-20261125T120000.parts").write_text(recorded)
-        variables = dict(_resumed=str(done), _cassandra_apply_parts=cassandra_apply_only(given))
+        variables = dict(_resumed=str(done), _cassandra_apply_parts=cassandra_apply_only(given), apply_only=given)
         rec, cur = (render(refuse["vars"][n], **variables) for n in ("_recorded", "_current"))
-        return None if rec == cur else [render(line, _recorded=rec, _current=cur) for line in refuse["vars"]["_said"]]
-    assert said("config,linux", None) == ["the interrupted run applied every part", "this one: apply_only=config,unit,linux",
-                                          "a resumed run applies the parts the interrupted one did",
-                                          "WAY OUT  resume without -e apply_only"]  # (no record: an earlier version's run)
-    assert said("", None) is None
-    assert said("linux,config", "config,unit,linux\n") is None
-    assert said("", "config,unit,linux\n")[-1] == "WAY OUT  resume with -e apply_only=config,unit,linux"
+        return cassandra_apply_resume_refusal(str(done), rec, cur, "RESUME", "OVER")
+    # audit B5: no record (an earlier version's run, or one stopped before it): refused, two exact ways out
+    assert said("config,linux", None) == []  # (given: the operator says which)
+    assert said("", None) == ["c-apply_config-20261125T120000.done: the parts the interrupted run applied are not recorded",
+                              "WAY OUT  resume giving them (all: every part):", "  RESUME",
+                              "WAY OUT  or start over without resuming:", "  OVER"]
+    assert said("linux,config", "config,unit,linux\n") == []
+    assert said("", "all\n") == []
+    assert said("all", "all\n") == []
+    assert said("", "config,unit,linux\n") == ["the interrupted run applied apply_only=config,unit,linux",
+                                               "this one: every part",
+                                               "a resumed run applies the parts the interrupted one did",
+                                               "WAY OUT  resume with them:", "  RESUME"]
+    assert "'-e apply_only=' ~ (_recorded or '<parts>')" in refuse["vars"]["_resume"]
 
 
 WRITERS_ANYWHERE = WRITERS + ("ansible.builtin.include_tasks", "ansible.builtin.include_role", "ansible.builtin.import_tasks")
@@ -711,3 +732,25 @@ def test_apply_full_compares_as_before_the_gate():
     assert users is False
     block = find_task(load_tasks(os.path.join(TASKS, "access_plan.yml")), "Compare the cqlsh and nodetool files of the users")
     assert "_cassandra_config_user_files_compare | default(true) | bool" in block["when"]
+
+
+def test_the_users_files_stop_says_why_and_the_way_out():
+    # audit B4: an operator stop (cassandra_output), its cause, then its way out
+    stop = find_task(load_tasks(os.path.join(TASKS, "access_plan.yml")), "Stop when the users' files could not be compared")
+    assert stop["vars"]["cassandra_output"] is True
+    lines = [render(line, inventory_hostname="n2", _read={"error": "KeyError: 'x'"}) for line in stop["vars"]["_said"]]
+    assert lines[0].endswith("could not be compared: KeyError: 'x'") and lines[-1].startswith("WAY OUT  ")
+
+
+def test_the_old_progress_files_cleanup_keeps_the_parts_of_a_live_run(tmp_path):
+    # audit B5: a .parts stays while its .done is not old (written to since: its mtime moves on, the .parts' does not)
+    progress = load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "progress.yml"))
+    remove = find_task(progress, "Remove old progress files")
+    old = [{"path": str(tmp_path / "a.done")}, {"path": str(tmp_path / "a.parts")}, {"path": str(tmp_path / "b.parts")},
+           {"path": str(tmp_path / "c.parts")}]
+    (tmp_path / "b.done").write_text("n1\n")  # (b: a live run, its .done new)
+
+    def removed(item):
+        done = render(remove["vars"]["_done"], item=item)
+        return render("{{ %s }}" % remove["when"], item=item, _done=done, cassandra_progress_old={"files": old})
+    assert [removed(i) for i in old] == [True, True, False, True]  # (c: no .done at all)

@@ -57,6 +57,7 @@
       register: cassandra_progress_old
       when: cassandra_progress_dir_stat.stat.exists or not ansible_check_mode  # --check made no dir
 
+    # (a .parts goes with its .done: an old one stays while its .done is not old, written to since)
     - name: Remove old progress files
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -65,6 +66,11 @@
       loop_control:
         label: "{{ item.path | basename }}"
       diff: false
+      when: >-
+        item.path is not match('.*[.]parts$')
+        or _done in cassandra_progress_old.files | map(attribute='path') or _done is not exists
+      vars:
+        _done: "{{ item.path | regex_replace('[.]parts$', '.done') }}"
 
     - name: Stop if there is nothing to resume
       ansible.builtin.fail:
@@ -94,6 +100,19 @@
       when:
         - _progress_resuming | bool
         - not (cassandra_progress_file_stat.stat.readable and cassandra_progress_file_stat.stat.writeable)
+
+    # _cassandra_progress_parts: what the run applies (apply_config, apply_only), next to it, written first: a .done
+    # always has it
+    - name: Record what the run applies with the progress file
+      ansible.builtin.copy:
+        content: "{{ _cassandra_progress_parts }}\n"
+        dest: "{{ cassandra_progress_file | regex_replace('[.]done$', '.parts') }}"
+        mode: "0644"
+      when:
+        - not _progress_resuming | bool
+        - _cassandra_progress_parts is defined
+        - not ansible_check_mode
+      diff: false  # the run's bookkeeping
 
     - name: Create the progress file
       ansible.builtin.file:

@@ -93,6 +93,11 @@
       files: >-
         {{ (_cassandra_config_changes | default([])
             + _cassandra_config_write | default([]) | reject('in', _cassandra_config_kept | default([])) | list) | length > 0 }}
+      # (RedHat: /etc/cassandra/conf to point at cassandra_rpm_conf_alternative, every file kept or not: confirm.yml's
+      # item of it)
+      conf directory: >-
+        {{ cassandra_config_conf_target is defined and cassandra_config_conf_target is not skipped
+           and cassandra_config_conf_target.stat.lnk_source | default('') != cassandra_rpm_conf_alternative }}
       owner, group, mode: "{{ _cassandra_config_perm_changes | default([]) | length > 0 }}"
       directories: >-
         {{ (_cassandra_config_dir_changes | default([])

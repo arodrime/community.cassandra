@@ -69,9 +69,20 @@
         # (drift's compare: every part, whatever -e apply_only says)
         _cassandra_apply_parts: >-
           {{ ('' if _cassandra_apply_config_compare_only | default(false) | bool else apply_only | default(''))
-             | community.cassandra.cassandra_apply_only }}
+             | community.cassandra.cassandra_apply_only(_command) }}
         _cassandra_apply_full: "{{ apply_full | default(false) | bool }}"
         _cassandra_apply_verify: "{{ apply_verify | default(false) | bool }}"
+        _cassandra_apply_command: "{{ _command }}"
+      vars:
+        # this run's command, for the ways out that give it with other options (--check kept)
+        _command: >-
+          {{ 'apply_config' | community.cassandra.cassandra_command(options=['--check'] if ansible_check_mode else [],
+                                                                   **_args) }}
+        _args:
+          inventory: "{{ ansible_inventory_sources | default([]) }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
       run_once: true
 
     - name: Refuse a part apply_config does not have
@@ -111,22 +122,32 @@
         - cassandra_rolling_resume | default(false) | bool
         - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no resume
         - _resumed | length > 0
-        - _recorded != _current
+        - _said | length > 0
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
         # (the file the resume picks; none: nothing to resume, said by the progress file's own check)
         _resumed: "{{ (cassandra_progress_found.files | default([]) | sort(attribute='mtime') | last | default({})).path | default('') }}"
+        # (none: a run of an earlier version, or one stopped before it was written: not known, given with apply_only)
         _recorded: >-
           {{ lookup('ansible.builtin.file', _resumed | regex_replace('[.]done$', '.parts'), errors='ignore')
-             | default('', true) | trim or 'all' }}
-        _current: "{{ _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}"
-        _said:
-          - "the interrupted run applied {{ 'every part' if _recorded == 'all' else 'apply_only=' ~ _recorded }}"
-          - "this one: {{ 'every part' if _current == 'all' else 'apply_only=' ~ _current }}"
-          - "a resumed run applies the parts the interrupted one did"
-          - "WAY OUT  resume {{ 'without -e apply_only' if _recorded == 'all' else 'with -e apply_only=' ~ _recorded }}"
+             | default('', true) | trim }}
+        # ('': no -e apply_only given)
+        _current: >-
+          {{ '' if apply_only | default('') | string in ['', 'None']
+             else _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}
+        _args:
+          inventory: "{{ ansible_inventory_sources | default([]) }}"
+          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+          hosts: "{{ cassandra_hosts | default('') }}"
+          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+        _resume: >-
+          {{ 'apply_config' | community.cassandra.cassandra_command(
+               extra=['-e cassandra_rolling_resume=true', '-e apply_only=' ~ (_recorded or '<parts>')], **_args) }}
+        _said: >-
+          {{ _resumed | community.cassandra.cassandra_apply_resume_refusal(_recorded, _current, _resume,
+               'apply_config' | community.cassandra.cassandra_command(**_args)) }}
 
     # in the plan of a real run, said under --check (the checks' notes)
     - name: Say the parts left out
@@ -283,22 +304,6 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
-    # a part left out (apply_only) that a node needs: its newer release (install), the AxonOps agent cassandra-env.sh
-    # loads (axonops); --check too, where the real run stops
-    - name: Refuse to leave out a part a node needs
-      ansible.builtin.fail:
-        msg: "{{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
-      run_once: true
-      when:
-        - _cassandra_apply_parts.left_out | length > 0
-        - _said | length > 0
-        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
-      vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
-        _said: "{{ ansible_play_hosts | community.cassandra.cassandra_apply_only_stops(hostvars, _cassandra_apply_parts.parts) }}"
-
     # (drift's compare: where a real run stops, no compare either, which another series would fail; drift says the
     # stop in IN SYNC)
     - name: End the compare where a real run stops
@@ -404,10 +409,11 @@
               {%- for n, v in _sums.items() if _cassandra_apply_config_verify.get(n) != v -%}{%- set _ = out.append(n) -%}{%- endfor -%}
               {{ out }}
             _said:
-              - "apply_verify: the plan of cassandra_config found nothing to change on this node,"
-              - "the rest of the role left other facts: {{ _differ | join(', ') }}"
+              - "{{ inventory_hostname }}: apply_verify: cassandra_config's plan found nothing to change"
+              - "{{ inventory_hostname }}: the rest of the role left other facts: {{ _differ | join(', ') }}"
               - "a bug of the collection's fast compare: please report it"
-              - "WAY OUT  run with -e apply_full=true (the whole compare on every node)"
+              - "WAY OUT  the whole compare on every node, as before it:"
+              - "  {{ _cassandra_apply_command }} -e apply_full=true"
 
     # nothing on a node with cassandra_linux_manage false (its OS settings kept as they are)
     - name: Compare the OS settings
@@ -489,15 +495,26 @@
         _cassandra_java_plan_running_only: true  # a node not running starts on the Java its unit gives
         _cassandra_java_plan_check_all: false
         _cassandra_java_plan_user: "{{ cassandra_user | default('cassandra') }}"
-      when: "'java' in _cassandra_apply_parts.parts"
 
-    # (java left out, apply_only: the running Cassandra read all the same, as java_plan.yml reads it: what its unit
-    # gave it, the restart pending, the proofs below read that JVM)
-    - name: Find the running Cassandra
-      ansible.builtin.include_role:
-        name: community.cassandra.cassandra_config
-        tasks_from: jvm_started.yml
-      when: "'java' not in _cassandra_apply_parts.parts"
+    # a part left out (apply_only) that a node needs: its newer release (install), the AxonOps agent cassandra-env.sh
+    # loads (axonops), the Java it moves to (java: its plan read all the same, above); --check too, where the real run
+    # stops; before anything is written
+    - name: Refuse to leave out a part a node needs
+      ansible.builtin.fail:
+        msg: "{{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+      run_once: true
+      when:
+        - _cassandra_apply_parts.left_out | length > 0
+        - _said | length > 0
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: nothing changed, no stop
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        _said: >-
+          {{ ansible_play_hosts | community.cassandra.cassandra_apply_only_stops(hostvars, _cassandra_apply_parts.parts,
+                                                                                  _cassandra_apply_command) }}
+
 
     # The AxonOps agent (cassandra_axonops_enabled): a Java move swaps its Java agent package, which is not supported
     # yet (update_java refuses it too): refused before any change, --check too (not drift's compare, which changes
@@ -1772,21 +1789,9 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
-
-    - name: Record the parts of the run with its progress file
-      ansible.builtin.copy:
-        content: "{{ _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}\n"
-        dest: "{{ cassandra_progress_file | regex_replace('[.]done$', '.parts') }}"
-        mode: "0644"
-      run_once: true
-      delegate_to: localhost
-      become: false  # the controller: no sudo there
-      diff: false  # the run's bookkeeping
       vars:
-        ansible_become: false  # an inventory ansible_become beats the become keyword
-      when:
-        - not cassandra_rolling_resume | default(false) | bool
-        - not ansible_check_mode
+        # the parts it applies, next to the progress file (apply_only; all: every part): a resume must give them
+        _cassandra_progress_parts: "{{ _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}"
 
     # -e cassandra_rolling_resume=true: an interrupted run resumes, skipping the nodes already done
     # said by the summary of a run that stops before them (the nodes written at once go first, in their own play)
