@@ -86,7 +86,7 @@ RESCUED = "cassandra_output_rescued"  # on a block: its rescue says what failed
 SAID = "cassandra_output_said"  # on a task: its failure is the stop of a verdict printed already (nothing printed)
 HELP = "cassandra_output_help"  # the help playbook's text: laid out at the terminal's width, its keys coloured
 INFO = "cassandra_output_info"  # an informative summary: in the progress colour, except its WARNING lines
-STEP = "cassandra_output_step"  # on a phase line: a step of the run, its nodes counted and its time said
+STEP = "cassandra_output_step"  # on a phase line: a step of the run, its tasks counted and its time said
 _PAUSES = ("pause", "ansible.builtin.pause", "ansible.legacy.pause")
 # the actions whose failure is the message itself (a verdict)
 _ASSERTS = ("assert", "ansible.builtin.assert", "ansible.legacy.assert")
@@ -708,12 +708,15 @@ class CallbackModule(DefaultCallback):
             elif not done:
                 self._step_said = False
                 return
+            if not done:  # on a terminal: its phase line alone, a blank line above (the log file has its start)
+                if not self._blank:
+                    self._display.display("", screen_only=True)
+                self._display.display(step.phase, color=step.tint, screen_only=True)
+                self._blank, self._ruled, self._live, self._gap, self._step_said = False, "", None, True, False
+                return
             if self._tty or not self._step_said:
                 self._line("")
-            if not done:  # on a terminal: its phase line alone (the log file has it already)
-                self._display.display(step.phase, color=step.tint, screen_only=True)
-                self._blank, self._ruled, self._live = False, "", None
-            for line in step_done(step.phase, seconds) if done else []:
+            for line in step_done(step.phase, seconds):
                 self._line(line, color=step.tint)
             self._gap, self._step_said = True, False
 
@@ -739,9 +742,12 @@ class CallbackModule(DefaultCallback):
         seconds at most unless forced; never two rows (cut to the terminal's width)."""
         with self._lock:
             now = self._clock()
-            if self._step is None or not self._tty or self._hold or self._paused or (not force and now - self._drawn < STEP_DRAW_EVERY):
+            if self._step is None or not self._tty or self._hold or self._paused:
                 return
-            text = step_line(self._step.phase, self._tasks, now - self._step.start, width=min(STEP_WIDTH, self._columns() - 1))
+            if not force and now - self._drawn < STEP_DRAW_EVERY:
+                return
+            width = min(STEP_WIDTH, self._columns() - 1)
+            text = step_line(self._step.phase, self._tasks, now - self._step.start, width=width)
             text = stringc(text, self._step.tint) if self._step.tint else text
             if self._footer is None:
                 self._footer = not self._blank
@@ -1004,11 +1010,10 @@ class CallbackModule(DefaultCallback):
     def _task_starts(self):
         """A task starts: the one before it done (one that gave no result, a meta task, not counted)."""
         with self._lock:
-            if self._task_said:
-                self._tasks += 1
-            self._task_said = False
+            counted, self._task_said = self._task_said, False
+            self._tasks += 1 if counted else 0
             if self._tty:
-                self._draw()
+                self._draw(force=counted)  # (the new count shown at once: the task may run long with no result)
 
     def v2_playbook_on_handler_task_start(self, task):
         self._say_refused()
@@ -1024,12 +1029,12 @@ class CallbackModule(DefaultCallback):
 
     def v2_playbook_on_task_start(self, task, is_conditional):
         self._say_refused()
-        self._task_starts()
-        if self._verbose():
-            return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
         self._paused = task.action in _PAUSES  # a question: no step's line under it
         if self._paused:
             self._clear()
+        self._task_starts()
+        if self._verbose():
+            return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
         if task.action in _PAUSES and _flag(task, GAP):  # a rule above its question (skipped too: one at most)
             self._rule()
         return None

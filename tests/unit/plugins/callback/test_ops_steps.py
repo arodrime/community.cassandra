@@ -49,10 +49,12 @@ class TerminalDisplay(object):
     columns = 100
 
     def __init__(self):
-        self.shown = []
+        self.shown, self.logged = [], []  # logged: what the log file (log_path) gets
 
     def display(self, line, color=None, stderr=False, screen_only=False, log_only=False, newline=True):
         self.shown.append((line, color, log_only))
+        if not screen_only:
+            self.logged.append(line)
         if not log_only:
             sys.stdout.write(line + ("\n" if newline else ""))
 
@@ -410,3 +412,53 @@ def test_a_step_without_a_terminal_writes_nothing_of_its_own_on_the_output():
     finally:
         sys.stdout = real
     assert out.getvalue() == ""
+
+
+def test_a_task_start_shows_the_new_count_at_once():
+    """The count of a task just over is drawn when the next one starts, even right after a draw: that task may run
+    long with no result."""
+    callback = step_callback(tty=True)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        callback.now[0] += 1
+        tasks(callback, "node1")  # drawn: task 0  1s
+        callback.now[0] += 0.05
+        callback._task_starts()  # 50 ms later, a long task starts
+    finally:
+        sys.stdout = real
+    assert screen(out.getvalue())[-1] == PHASE + "  task 1  1s"
+
+
+def test_the_phase_task_itself_is_not_counted():
+    """v2_runner_on_ok counts the phase task's result before it prints it: the step starts at task 0."""
+    callback = step_callback(tty=False)
+
+    class Phase(object):
+        run_once, action, loop = True, "ansible.builtin.debug", None
+        vars = {"cassandra_output": True, "cassandra_output_step": True}
+
+    phase = Result("node1", Phase())
+    phase.result = {"msg": PHASE}
+    callback.v2_runner_on_ok(phase)
+    assert callback._step is not None and callback._tasks == 0
+    tasks(callback, "node1")
+    tasks(callback, "node1")
+    assert callback._tasks == 1
+
+
+def test_a_step_under_a_second_on_a_terminal_leaves_the_log_file_as_a_pipe_has_it():
+    callback = step_callback(tty=True)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        callback._print("WARNING  a note")
+        callback._print("Checking the cluster from each node (3 nodes)...")
+    finally:
+        sys.stdout = real
+    logged = callback._display.logged
+    assert logged[:2] == [PHASE, "WARNING  a note"] and logged.count(PHASE) == 1
+    assert not any(a == b == "" for a, b in zip(logged, logged[1:])), logged  # never two blank lines in a row
+    assert screen(out.getvalue())[:5] == ["WARNING  a note", "", PHASE, "", "Checking the cluster from each node (3 nodes)..."]

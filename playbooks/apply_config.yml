@@ -19,7 +19,7 @@
     _cassandra_notes_in_plan: true  # the checks' WARNING lines in the plan, before the question
     _cassandra_preflight_seeds_down_ok: true  # a seed of this run not running: written, maybe started
     _cassandra_preflight_release_update: true  # releases of one series, the inventory's among them: its own update
-    _cassandra_preflight_step: true  # its phase line a step of the run (ops callback: nodes counted, time said)
+    _cassandra_preflight_step: true  # its phase line a step of the run (ops callback: tasks counted, time said)
 
 # (a node that fails here would be left out of the plan: nothing done then)
 # _cassandra_apply_config_compare_only (the drift playbook's import): the compare alone, as a real run does it before
@@ -52,7 +52,7 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
-        cassandra_output_step: true  # a step: its nodes counted, its time said
+        cassandra_output_step: true  # a step: its tasks counted, its time said
 
     - name: Note when the run started
       ansible.builtin.set_fact:
@@ -1615,7 +1615,7 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
-        cassandra_output_step: true  # a step: its nodes counted, its time said
+        cassandra_output_step: true  # a step: its tasks counted, its time said
 
     - name: Apply the OS settings
       when: not ansible_check_mode
@@ -1720,7 +1720,7 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
-        cassandra_output_step: true  # a step: its nodes counted, its time said
+        cassandra_output_step: true  # a step: its tasks counted, its time said
         _names: "{{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list }}"
 
     - name: Apply the config on these nodes
@@ -1772,7 +1772,7 @@
       vars:
         cassandra_output: true  # a phase line (ops callback)
         cassandra_output_gap: true  # a block of its own
-        cassandra_output_step: true  # a step: its nodes counted, its time said
+        cassandra_output_step: true  # a step: its tasks counted, its time said
         _names: "{{ ansible_play_hosts | reject('in', cassandra_progress_done | default([])) | list }}"
 
     - name: Stage the config files

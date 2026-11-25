@@ -78,7 +78,8 @@ Conventions
   nodes)...  task 37  1m12s``; no total: the tasks a run includes depend on each node); once over, ``...  done in
   4m12s`` (its phase line alone under a second). A message printed meanwhile goes above that line. In a log or a
   pipe: the phase line when it starts, a line with the count at a result 5 minutes or more after the last one,
-  ``...  done in 4m12s`` once over (a terminal run's ``log_path`` file the same, without the count lines). The count
+  ``...  done in 4m12s`` once over, from 1 s on (a terminal run's ``log_path`` file the same, without the
+  count lines). The count
   and the time move at each task and each result: a long task with no result yet leaves them as they are. A step
   stopped by an error or a progress line says no time (its phase line alone, as without a step). apply_config's
   steps: ``Checking the cluster (24 nodes)...``, ``Comparing the config with the inventory (24 nodes)...``, under
