@@ -415,7 +415,8 @@ def test_jmx_access_entries_without_a_password_pass(access):
 
 def test_a_file_the_node_lacks_is_a_difference():
     out = _compare_files({"logback.xml": "<configuration/>\n"}, {})
-    assert out == {"differences": ["logback.xml: not on the node, the roles would create it"], "notes": []}
+    assert out == {"differences": ["logback.xml: not on the node, the roles would create it"], "notes": [],
+                   "writes": []}
 
 
 def test_a_file_that_cannot_be_read_is_a_difference():
@@ -1432,7 +1433,7 @@ def os_check(records="", keep=None, rc=0, without=""):
           "import_cluster_keep": keep or {}, "import_cluster_own_os": True}  # (its limits file has the role's mark)
     out = cassandra_import_self_check_nodes(inventory, layout["hosts"], [{"address": "10.0.0.1", "host": "h1", "read": True}],
                                             {"10.0.0.1": "n1"}, {"h1": hv})
-    return out["n1"]
+    return dict((k, v) for k, v in out["n1"].items() if k != "writes")  # (the config files: their own tests)
 
 
 def test_os_as_the_role_sets_it_passes():

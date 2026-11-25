@@ -28,13 +28,11 @@ from collections import namedtuple
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.plugins.filter.core import to_bool
 
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-    BRANCH_NOT_RUN_NOTE, IDENTITY, PASSWORD_FILE_NOTE)
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import IDENTITY
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import (
     KEEP, value_shown, values_hidden)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_files import (
     KEPT_PART_WORDS, KEPT_PARTS, KEPT_PARTS_VAR, keep_parts_option)
-from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_config import HEAP_MOVED
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_layout import (
     group_chains, hand_edits_kept, NODE_LEVEL, NOT_READ, PER_NODE, roles_defaults, templated, vars_sort_key)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_nodes import CONFIG_FILE, RESTART_DOES
@@ -1884,36 +1882,52 @@ def _versions_lines(report):
 
 # --- the head, what to do next, the details --------------------------------------------------------------------
 
-# a self-check note of a JVM options file the running Java does not read ("jvm11-server.options: ... (no effect: Java
-# 17 does not read this file; ...)"): apply_config writes it, no restart for it
-_UNREAD_JVM_NOTE = re.compile(r"^(jvm\d+-server\.options): .*\(no effect: Java \d+ does not read this file;")
+# the details' section of the diffs of the files the next apply_config rewrites (the self-check's writes)
+WRITES_DIFFS = "REWRITES OF THE NEXT APPLY_CONFIG"
 
 
-# the import's notes of lines of cassandra-env.sh with no effect that the role's stock file has otherwise: the lines of
-# a JMX branch the node does not run, the stock password file line commented out (apply_config rewrites the file as
-# stock, no restart)
-_DORMANT_NOTES = (re.compile("^%s$" % re.escape(BRANCH_NOT_RUN_NOTE).replace(re.escape("%s"), ".+")),
-                  re.compile("^%s$" % re.escape(PASSWORD_FILE_NOTE)))
+def _writes(report, self_check):
+    """What the next apply_config writes on the nodes read with no effect (the self-check's writes: the files it
+    rewrites, the ones it adds its header line to), the same on several nodes once -> [(file, what, why, [node])],
+    the rewritten files first; what: header, rewritten, or "rewritten, may restart" (a file apply_config's proof of
+    no restart does not cover)."""
+    found = {}
+    for name in report.names:
+        for w in ((self_check or {}).get(name) or {}).get("writes") or []:
+            what = w["what"] if w.get("proof", True) else "rewritten, may restart"
+            found.setdefault((w["what"] != "rewritten", w["file"], what, tuple(w["why"])), []).append(name)
+    return [(f, what, list(why), members) for (dummy, f, what, why), members in sorted(found.items())]
 
 
-def _dormant(report):
-    """The kinds of lines of cassandra-env.sh with no effect that the role's stock file has otherwise, on a node read
-    (_DORMANT_NOTES: 0 a JMX branch not run, 1 the password file line) -> sorted [index]."""
-    return sorted(set(i for n in report.read for note in n.get("normalized") or []
-                      for i, p in enumerate(_DORMANT_NOTES) if p.match(note)))
+def _writes_diff_lines(report, self_check):
+    """The details' section of the files the next apply_config rewrites: each file's diff, once per group of nodes
+    with the same one -> [line]."""
+    found = {}
+    for name in report.names:
+        for w in ((self_check or {}).get(name) or {}).get("writes") or []:
+            if w["what"] == "rewritten":
+                found.setdefault((w["file"], tuple(w["diff"])), []).append(name)
+    lines = []
+    for (f, diff), members in sorted(found.items()):
+        lines.append("  %s on %s:" % (f, out.nodes(members)))
+        lines += ["    " + line for line in diff] if diff else ["    (its diff not shown: passwords)"]
+    return ["", "%s  (their diffs)" % WRITES_DIFFS] + lines if lines else []
 
 
-def _jvm_rewrites(report, self_check):
-    """The config files the next apply_config rewrites with the same JVM arguments: the JVM's files the import
-    proved give the same arguments (the nodes' rewritten; cassandra-env.sh with lines of no effect the role's stock
-    file has otherwise, _dormant), the options files their Java does not read -> sorted [file]. apply_config makes
-    the same proof before it writes them, and restarts no node for them (cassandra_apply_config_no_effect)."""
-    files = set(f for n in report.read for f in n.get("rewritten") or [])
-    if _dormant(report):
-        files.add("cassandra-env.sh")
-    for check in (self_check or {}).values():
-        files.update(m.group(1) for m in (_UNREAD_JVM_NOTE.match(note) for note in check.get("notes") or []) if m)
-    return sorted(files)
+def _may_restart(writes):
+    """The files of _writes apply_config may restart for (its proof of no restart does not cover them)."""
+    return sorted(set(f for f, what, dummy, dummy2 in writes if what.endswith("may restart")))
+
+
+def _writes_rows(report, writes):
+    """A row each of _writes, its nodes when not all the nodes read -> [(file, text)]."""
+    rows = []
+    for f, what, why, members in writes:
+        text = "header line added" if what == "header" else "%s: %s" % (what, ", ".join(why))
+        if len(members) < len(report.names):
+            text += "  on %s" % out.nodes(members)
+        rows.append((f, text))
+    return rows
 
 
 # the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it, the rows under it the
@@ -1925,19 +1939,16 @@ SYNC_WIDTH = 79
 def _sync_lines(report, data, self_check, self_check_error):
     """Whether applying the inventory changes the cluster: no (the self-check's differences: how many settings on
     how many nodes), not all verified (nodes not read, parts or files kept by hand, a self-check that did not run:
-    what, on how many nodes, a row each), else yes, with what the next apply_config rewrites with no effect on the
-    values, a row each (the JVM's files with the same arguments: no restart, apply_config proves it again before
-    writing them) -> [line].
-    e.g. ["  in sync with Ansible: yes", "    the next apply_config:",
-          "      rewrites 3 files with the same JVM arguments, no restart"]."""
+    what, on how many nodes, a row each), else yes; with yes or not all verified, what the next apply_config
+    writes with no effect (_next_writes_lines) -> [line].
+    e.g. ["  in sync with Ansible: yes", "    the next apply_config, no restart:",
+          "      jvm-server.options     rewritten: heap placement", ...]."""
     width = min(report.width, SYNC_WIDTH)
 
-    def said(answer, rows=(), head=None):
+    def said(answer, rows=()):
         lines = ["  " + SYNC + answer]
-        if head:
-            lines.append("    " + head)
         for row in rows:
-            lines += fill_text(row, width, "      " if head else "    ", "  ")
+            lines += fill_text(row, width, "    ", "  ")
         return lines
     differing = dict((name, len(check.get("differences") or [])) for name, check in (self_check or {}).items()
                      if check.get("differences"))
@@ -1961,19 +1972,31 @@ def _sync_lines(report, data, self_check, self_check_error):
         if not label.startswith("cassandra_config_keep_files") and _left_kind(label) == "managed":
             gaps.append("%s not managed by Ansible on %s" % (INSTALLED.get(label, label),
                                                              unbreakable(out.plural(len(members), "node"))))
-    if gaps:
-        return said("not all verified", gaps)
+    lines = said("not all verified", gaps) if gaps else said("yes")
+    return lines + _next_writes_lines(report, self_check, width)
+
+
+def _next_writes_lines(report, self_check, width):
+    """Under in sync with Ansible (yes, not all verified): what the next apply_config writes with no effect, a row
+    each (_writes_rows), where their diffs are, the other rewrites with no effect (the self-check's notes) ->
+    [line]."""
     others = sorted(set(note[:-len(NO_EFFECT_NOTE)].split(": ")[1] if note.count(": ") > 1
                         else note[:-len(NO_EFFECT_NOTE)]
                         for check in (self_check or {}).values() for note in check.get("notes") or []
                         if note.endswith(NO_EFFECT_NOTE)))
-    rewrites = []
-    files = _jvm_rewrites(report, self_check)
-    if files:
-        rewrites.append("rewrites %s with the same JVM arguments, no restart" % out.plural(len(files), "file"))
+    lines = []
+    writes = _writes(report, self_check)
+    if writes or others:
+        lines.append("    the next apply_config%s:" % ("" if _may_restart(writes) else ", no restart"))
+        lines += aligned_rows(_writes_rows(report, writes), "      ", width)
+    if writes:
+        details = re.sub(r"\.txt$", "", report.report_name) + ".details.txt"
+        lines += fill_text("their diffs: %s, %s" % (unbreakable(details), unbreakable(WRITES_DIFFS)),
+                           width, "      ", "  ")
     if others:
-        rewrites.append("rewrites %s with no effect" % out.plural(len(others), "other item" if files else "item"))
-    return said("yes", rewrites, "the next apply_config:" if rewrites else None)
+        lines += fill_text("rewrites %s with no effect" % out.plural(len(others), "other item" if writes else "item"),
+                           width, "      ", "  ")
+    return lines
 
 
 def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync=()):
@@ -2045,24 +2068,19 @@ WORDS_USED = (
 REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 
-def _apply_config_expects(files, heap_moved, rewrites, dormant=()):
-    """What apply_config --check --diff shows on the nodes imported: the JVM's files it rewrites with the same
-    arguments, no restart (files, _jvm_rewrites'; the heap moved among them: heap_moved; cassandra-env.sh written as
-    stock, its lines of no effect dropped or the stock ones back: dormant, _dormant's), the rewrites with no effect (rewrites)
-    -> text."""
-    if not files:
-        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date (header lines aside: a comment, no restart)"
-    text = "%s rewritten, no restart (the same JVM arguments%s%s)" % (
-        ", ".join(files), "; the heap moves to jvm-server.options" if heap_moved else "",
-        "; cassandra-env.sh as stock: " + ", ".join(
-            ["lines of a JMX branch the nodes do not run dropped", "the stock JMX password file line back, an option of"
-             " the next restart the JVM never reads"][i] for i in dormant) if dormant else "")
-    if rewrites:
-        return text + ", and the rewrites under %s" % REWRITES
-    return text + ", nothing else (header lines aside: a comment, no restart)"
+def _apply_config_expects(writes, rewrites):
+    """What apply_config --check --diff shows on the nodes imported: the files the head lists under "the next
+    apply_config, no restart" (writes, _writes'), the rewrites with no effect (rewrites) -> text."""
+    if not writes:
+        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
+    return "WOULD CHANGE: the %s the head lists under the next apply_config%s; WHAT HAPPENS: %s" % (
+        out.plural(len(set(f for f, dummy, dummy2, dummy3 in writes)), "file"),
+        ", and the rewrites under %s" % REWRITES if rewrites else "",
+        "no restart" if not _may_restart(writes) else "a restart if it cannot prove none for %s" % ", ".join(
+            _may_restart(writes)))
 
 
-def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, jvm_files,
+def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, writes,
                 rewrites=False):
     """WHAT TO DO NEXT: the next steps, numbered, each command on a line of its own under its step, what it should
     show under it -> [line]. "none of it stops you" only when the self-check passed."""
@@ -2081,13 +2099,12 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append(("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
                       else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd), []))
     if self_check_ok:
-        heap_moved = [line for n in report.read for line in n.get("normalized") or [] if line.endswith(HEAP_MOVED)]
         apply_check = out.command("apply_config", inventory=report.inventory or None, hosts=report.hosts or None,
                                   extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=report.inventory or None, hosts=report.hosts or None, extra=["--check"],
                                cwd=report.cwd)
         items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
-                      [(apply_check, _apply_config_expects(jvm_files, bool(heap_moved), rewrites, _dormant(report))),
+                      [(apply_check, _apply_config_expects(writes, rewrites)),
                        (topology, "nothing to do")]))
     if not items:
         items.append(("Nothing: the inventory matches the nodes.", []))
@@ -2272,7 +2289,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     if UNREAD in blocks:
         lines += ["", "NODES NOT READ"] + blocks[UNREAD]
     lines += [""] + _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed,
-                                removed, same, _jvm_rewrites(report, self_check), rewrites=bool(rewrites))
+                                removed, same, _writes(report, self_check), rewrites=bool(rewrites))
     details_file = re.sub(r"\.txt$", "", report_file) + ".details.txt"
     if screen:
         lines += ["", "details: %s" % out.path_from(details_file, cwd),
@@ -2312,7 +2329,7 @@ def _details_report(report, data, layout, self_check, leftovers, convergence, cl
     lines += ["", "FOR INFO"]
     for title, entries in _info_blocks(report, data, leftovers, convergence):
         lines += fill_text(title, report.width, "  ") + entries
-    return lines + [""] + _details_lines(layout, self_check)
+    return lines + _writes_diff_lines(report, self_check) + [""] + _details_lines(layout, self_check)
 
 
 def _self_check_section(report, self_check, report_file, self_check_error, allow_unread):

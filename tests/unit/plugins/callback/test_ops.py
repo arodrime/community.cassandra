@@ -1939,9 +1939,10 @@ def test_the_import_head_one_colour_per_row_its_rows_as_their_line(answer):
     # row of the in sync paragraph as its line (yes green, not all verified orange, no red), the other paragraphs of
     # the head as its first line, through the blank lines between them; never a row wider than 79 columns
     from ansible import constants as C
-    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_report import node
-    kwargs = {"yes": dict(nodes=[node(i, rewritten=["cassandra-env.sh", "jvm-server.options"]) for i in range(1, 4)],
-                          check=True),
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_report import (
+        node, PROD_WRITES)
+    writes = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES} for i in range(1, 4)}
+    kwargs = {"yes": dict(check=True, self_check=writes),
               "not all verified": dict(nodes=[node(1), node(2), node(3, read=False)], ok=False, allow_unread=True),
               "no": dict(ok=False, strict=False, self_check={"node1": {"differences": ["cassandra.yaml: x: 1 -> 2"]}})}
     shown = import_head_shown(**kwargs[answer])

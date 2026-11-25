@@ -121,7 +121,7 @@ def test_clean_import_nothing_to_act_on():
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
-        "     expected:  every node up to date (header lines aside: a comment, no restart)",
+        "     expected:  every node up to date",
         "       ansible-playbook community.cassandra.topology --check",
         "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)
@@ -1398,12 +1398,12 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
     """JVM arguments moved and files rewritten with no effect: the next step names the section as it is titled."""
     note = "cassandra_linux: 90-nproc.conf: absent -> cassandra nproc 32768, no effect (the node keeps the values it" \
            " has now)"
-    lines = report([node(1, rewritten=["cassandra-env.sh"])], self_check={"node1": {"differences": [], "notes": [note]}},
+    lines = report([node(1)], self_check={"node1": {"differences": [], "notes": [note], "writes": PROD_WRITES[:1]}},
                    details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
-    assert ("expected: cassandra-env.sh rewritten, no restart (the same JVM arguments), and the rewrites under"
-            " APPLY_CONFIG WILL REWRITE (no effect) ansible-playbook") in steps
+    assert ("expected: WOULD CHANGE: the 1 file the head lists under the next apply_config, and the rewrites under"
+            " APPLY_CONFIG WILL REWRITE (no effect); WHAT HAPPENS: no restart ansible-playbook") in steps
 
 
 def test_parts_kept_said_in_one_sentence():
@@ -1529,23 +1529,48 @@ def sync(lines):
     return said
 
 
-def test_in_sync_yes_with_the_rewrites_and_no_restart_for_them():
+def writes(*rows):
+    """A self-check's writes: (file, what, why...) each."""
+    return [{"file": f, "what": what, "why": list(why), "diff": ["--- %s" % f, "+++ %s" % f, "-a", "+b"]
+             if what == "rewritten" else []} for f, what, *why in rows]
+
+
+PROD_WRITES = writes(("cassandra-env.sh", "rewritten", "layout"), ("jvm-server.options", "rewritten", "heap placement"),
+                     ("jvm17-server.options", "rewritten", "heap placement"), ("cassandra.yaml", "header"),
+                     ("logback.xml", "header"))
+
+
+def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
+    # (2026-11-25, owner: a difference with no effect takes the role's file once, announced: which files, why)
     assert sync(report([node(i) for i in range(1, 4)])) == ["  in sync with Ansible: yes"]
-    # the JVM arguments moved into the collection's layout: apply_config writes the files with the same JVM arguments
-    # (cassandra_apply_config_no_effect: no restart); OS rewrites with no effect said apart
-    moved = [node(i, rewritten=["cassandra-env.sh", "jvm-server.options"]) for i in range(1, 4)]
     os_note = "cassandra_linux: /etc/systemd/system/disable-thp.service: another content -> the role's" \
         ", no effect (the node keeps the values it has now)"
-    checks = {"node%d" % i: {"differences": [], "notes": [os_note]} for i in range(1, 4)}
-    lines = report(moved, self_check=checks, screen=True, width=200)
-    # (apply_config proves it again before it writes them, and restarts no node for them); a row each
+    checks = {"node%d" % i: {"differences": [], "notes": [os_note], "writes": PROD_WRITES} for i in range(1, 4)}
+    checks["node3"] = dict(checks["node3"], writes=PROD_WRITES[1:])
+    lines = report([node(i) for i in range(1, 4)], self_check=checks, screen=True, width=200)
     assert sync(lines) == ["  in sync with Ansible: yes",
-                           "    the next apply_config:",
-                           "      rewrites 2 files with the same JVM arguments, no restart",
+                           "    the next apply_config, no restart:",
+                           "      cassandra-env.sh       rewritten: layout  on node1, node2",
+                           "      jvm-server.options     rewritten: heap placement",
+                           "      jvm17-server.options   rewritten: heap placement",
+                           "      cassandra.yaml         header line added",
+                           "      logback.xml            header line added",
+                           "      their diffs: reports/my_cluster/report.details.txt,",
+                           "        REWRITES OF THE NEXT APPLY_CONFIG",
                            "      rewrites 1 other item with no effect"]
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "expected: WOULD CHANGE: the 5 files the head lists under the next apply_config, and the rewrites under" \
+        " APPLY_CONFIG WILL REWRITE (no effect); WHAT HAPPENS: no restart" in said, said
+    # the diffs in the details, once per group of nodes with the same one
+    details = report([node(i) for i in range(1, 4)], self_check=checks, details=True)
+    at = details.index("REWRITES OF THE NEXT APPLY_CONFIG  (their diffs)")
+    assert details[at + 1:at + 6] == ["  cassandra-env.sh on node1, node2:", "    --- cassandra-env.sh",
+                                      "    +++ cassandra-env.sh", "    -a", "    +b"]
+    assert "  jvm-server.options on node1..node3:" in details
     # the OS rewrites alone: not "other"
-    assert sync(report([node(i) for i in range(1, 4)], self_check=checks, screen=True))[2:] == [
-        "      rewrites 1 item with no effect"]
+    checks = {"node%d" % i: {"differences": [], "notes": [os_note]} for i in range(1, 4)}
+    assert sync(report([node(i) for i in range(1, 4)], self_check=checks, screen=True))[1:] == [
+        "    the next apply_config, no restart:", "      rewrites 1 item with no effect"]
 
 
 def test_in_sync_not_all_verified_says_what_and_where():
@@ -1685,24 +1710,30 @@ def test_a_value_that_differs_by_case_only_differs():
     assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", review))) == ["cassandra_linux_limits.memlock"]
 
 
-def test_the_next_step_expects_cassandra_env_as_stock_when_its_dormant_lines_go():
+def test_a_rewrite_apply_config_proves_no_restart_for_is_not_said_without_restart():
+    # (self-review 2026-11-25) a file outside apply_config's proof of no restart (cassandra-env.sh, the JVM options
+    # files, logback.xml): never under "no restart"
+    yaml = dict(writes(("cassandra.yaml", "rewritten", "layout"))[0], proof=False)
+    checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[1:3] + [yaml]} for i in (1, 2)}
+    lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
+    assert sync(lines)[1:4] == ["    the next apply_config:",
+                                "      cassandra.yaml         rewritten, may restart: layout",
+                                "      jvm-server.options     rewritten: heap placement"]
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "WHAT HAPPENS: a restart if it cannot prove none for cassandra.yaml" in said, said
+
+
+def test_the_next_step_expects_the_writes_then_every_node_up_to_date():
     # e2e (a prod-shape import): "expected: every node up to date (header lines aside)", then apply_config --check
-    # rewrote cassandra-env.sh (the lines of the remote JMX branch the nodes do not run, the stock password file line)
-    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
-        branch_not_run_note, PASSWORD_FILE_NOTE)
-    branch = "lines of a JMX branch the nodes do not run dropped"
-    password = "the stock JMX password file line back, an option of the next restart the JVM never reads"
-    for notes, words in (([branch_not_run_note(3, "local")], branch), ([PASSWORD_FILE_NOTE], password),
-                         ([branch_not_run_note(1, "local"), PASSWORD_FILE_NOTE], branch + ", " + password)):
-        lines = report([node(1, normalized=notes), node(2)], details=False)
-        said = " ".join(" ".join(line.split()) for line in lines)
-        assert "every node up to date" not in said
-        assert ("expected: cassandra-env.sh rewritten, no restart (the same JVM arguments; cassandra-env.sh as stock: %s),"
-                " nothing else" % words) in said, said
-        assert sync(lines)[1:] == ["    the next apply_config:",
-                                   "      rewrites 1 file with the same JVM arguments, no restart"]
-    said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], details=False))
-    assert "expected: every node up to date (header lines aside: a comment, no restart)" in said
+    # rewrote cassandra-env.sh and the heap's two files: the expected line names them now
+    checks = {"node1": {"differences": [], "notes": [], "writes": PROD_WRITES[:1]},
+              "node2": {"differences": [], "notes": [], "writes": []}}
+    said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
+    assert "expected: WOULD CHANGE: the 1 file the head lists under the next apply_config; WHAT HAPPENS: no" \
+        " restart" in said, said
+    checks["node1"]["writes"] = []
+    said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
+    assert "expected: every node up to date" in said and "WOULD CHANGE" not in said
 
 
 def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written():
@@ -1736,3 +1767,4 @@ def test_a_sub_key_of_a_dict_not_merged_with_its_default_is_advised_as_written()
                  with_vars(3)])
     assert "remove cassandra_linux_sysctl from host_vars/node2/ (the rest of it is the collection's default)" in text, \
         text
+

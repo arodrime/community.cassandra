@@ -70,8 +70,8 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_os import 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_permissions import (
     cassandra_file_permissions, permission_differences)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_settings import (
-    compared, jvm_options_settings, properties_settings, same_settings, same_yaml_value, shell_lines,
-    xml_differences, xml_settings, yaml_settings, yaml_rejected)
+    HEADER_MARK, cassandra_config_header, compared, jvm_options_settings, properties_settings, same_settings,
+    same_yaml_value, shell_lines, xml_differences, xml_settings, yaml_settings, yaml_rejected)
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as _out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_secrets import MASK, mask, mask_lines
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_differences import HEAP_FILE
@@ -618,7 +618,7 @@ def _self_check(files_data, hosts, name, facts, live, node_environment, storage_
             differences, notes = check(variables, facts, os_found, os_own)
             out["differences"] += differences
             out["notes"] += notes
-    return {"differences": errors + out["differences"], "notes": out["notes"]}
+    return {"differences": errors + out["differences"], "notes": out["notes"], "writes": out["writes"]}
 
 
 # cassandra_linux's variables the model of what it would change reads (cassandra_os.cassandra_linux_changes), as the
@@ -909,7 +909,63 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
     if not differences + heap:
         differences = _apply_config_restarts(as_written[0], as_written[1], storage_dir, series, java, running,
                                              node_environment)
-    return {"differences": differences + heap, "notes": notes}
+    return {"differences": differences + heap, "notes": notes,
+            "writes": apply_config_writes(as_written[0], as_written[1], storage_dir, series, java,
+                                          password_line=PASSWORD_FILE_NOTE in notes)}
+
+
+# the files of other roles than cassandra_config the import renders (apply_config_writes leaves them out)
+OTHER_ROLES_FILES = ("cassandra.service", "medusa.ini")
+# a JVM options line of the heap (its placement: the role writes it in jvm-server.options)
+HEAP_LINE = re.compile(r"^-Xm[snx]")
+
+
+def apply_config_writes(rendered, live, storage_dir="", series="", java="", password_line=False):
+    """What cassandra_config would write on a node whose files are live ({file: text}) from rendered ({file: the
+    role's text}), the files it leaves as they are aside (the same text, or the same settings and its header line
+    there): [{file, what: rewritten | header, why: [reason], diff: [line], proof}], sorted by file. A file of the same
+    settings gets the role's header line (cassandra_config_header); one with other settings (the self-check
+    proved no effect, else they are differences) is rewritten, why: "heap placement" (an options file whose -Xms,
+    -Xmx, -Xmn lines differ), "Java N does not read it" (the options file of another Java), "layout" (any other
+    difference), and for cassandra-env.sh whose stock JMX password file line is commented out (password_line: the
+    JVM never reads it, PASSWORD_FILE_NOTE) that line back, an option of its next start; diff: its unified diff,
+    secrets masked (none for jmxremote.password); proof: apply_config proves its no restart (NO_RESTART_PROOF,
+    else it may restart for it)."""
+    out = []
+    reads = jvm.options_file(series, java)
+    for name in sorted(f for f in rendered if f in live and f not in OTHER_ROLES_FILES):
+        node, role = live[name], rendered[name]
+        if node == role:
+            continue
+        if name.startswith("jmxremote."):
+            same = _jmx_entries(node) == _jmx_entries(role)
+            header = same and HEADER_MARK not in node and HEADER_MARK in role
+        else:
+            same = same_settings(name, node, role, storage_dir)
+            header = same and bool(cassandra_config_header(node, role, name, storage_dir))
+        if same:
+            if header:
+                out.append({"file": name, "what": "header", "why": [], "diff": []})
+            continue
+        why = []
+        other = re.match(r"^jvm(\d+)-server\.options$", name)
+        if other and reads and name != reads:
+            why.append("Java %s does not read it" % jvm.java_major(java))
+        elif name.endswith(".options"):
+            heap = [[w for w in jvm.words(t.split("\n")) if HEAP_LINE.match(w)] for t in (node, role)]
+            rest = [[w for w in jvm.words(t.split("\n")) if not HEAP_LINE.match(w)] for t in (node, role)]
+            why += ["heap placement"] if heap[0] != heap[1] else []
+            why += ["layout"] if rest[0] != rest[1] or not why else []
+        else:
+            why.append("layout")
+        if name == "cassandra-env.sh" and password_line:
+            why.append("the JMX password file option back (never read)")
+        diff = [] if name == "jmxremote.password" else list(difflib.unified_diff(
+            mask(node).split("\n"), mask(role).split("\n"), "%s (the node's)" % name, "%s (the role's)" % name,
+            lineterm=""))
+        out.append({"file": name, "what": "rewritten", "why": why, "diff": diff,
+                    "proof": bool(NO_RESTART_PROOF.match(name))})
+    return out
 
 
 # the files apply_config's own proof of no restart covers (cassandra_apply_config_no_effect)

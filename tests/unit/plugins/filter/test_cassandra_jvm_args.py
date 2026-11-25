@@ -415,21 +415,26 @@ def test_g1_with_a_young_generation_in_cassandra_env_keeps_the_heap_as_it_is(tmp
 def test_the_report_says_the_heap_moves_to_jvm_server_options(tmp_path):
     # the heap pair at the end of jvm17-server.options: the role writes it in jvm-server.options
     files = node_files("50x", add_to("jvm17-server.options", "-Xms16G\n-Xmx16G"))
-    nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
-    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
+    cmdline = launch(files, "17", tmp_path)
+    nodes = [dict(imported(files, "50x", "17", cmdline)[2], name="n1", address="10.0.0.1")]
+    checks = {"n1": check(files, "50x", java="17", cmdline=cmdline)}
+    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", checks, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "jvm-server.options, jvm17-server.options rewritten, no restart (the same JVM"
-            " arguments; the heap moves to jvm-server.options), nothing else" in line]
+    assert [line for line in lines if re.match(r"^      jvm-server.options +rewritten: heap placement$", line)]
+    assert [line for line in lines if re.match(r"^      jvm17-server.options +rewritten: heap placement$", line)]
+    assert [line for line in lines if "expected:  WOULD CHANGE: the" in line]
     assert not [line for line in lines if "see HAND EDITS" in line]
     # the heap already in jvm-server.options, a JVM_OPTS line moved: it does not move
     files = node_files("50x", both(add_to("jvm-server.options", "-Xms16G\n-Xmx16G"),
                                    before_extra('JVM_OPTS="$JVM_OPTS -XX:+AlwaysPreTouch"')))
-    nodes = [dict(imported(files, "50x", "17", launch(files, "17", tmp_path))[2], name="n1", address="10.0.0.1")]
+    cmdline = launch(files, "17", tmp_path)
+    nodes = [dict(imported(files, "50x", "17", cmdline)[2], name="n1", address="10.0.0.1")]
     assert nodes[0]["vars"]["cassandra_heap_in_jvm_options"] is True
-    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", {}, True,
+    checks = {"n1": check(files, "50x", java="17", cmdline=cmdline)}
+    lines = cassandra_import_report(cassandra_inventory_layout(nodes, "c"), ["c.yml", "."], "report.txt", checks, True,
                                     width=400, in_git=False)
-    assert [line for line in lines if "rewritten, no restart (the same JVM arguments), nothing else" in line]
-    assert not [line for line in lines if "the heap moves" in line]
+    assert [line for line in lines if re.match(r"^      cassandra-env.sh +rewritten: layout$", line)]
+    assert not [line for line in lines if "heap placement" in line]
 
 
 @pytest.mark.parametrize("series, java, where, heap, keep", [
@@ -1213,10 +1218,6 @@ def test_report_moved_cleanup_and_next(tmp_path):
     assert re.match(r"^    jvm11-server.options line \d+: -Xmx4G   all \(2 nodes\)$", lines[at + 1])
     assert lines[at + 2] == "      not read, Java 17 reads jvm17-server.options"
     assert lines[1] == "  1 hand edit moved"  # (the head's count, a row of its own)
-    after = lines[next(i for i, line in enumerate(lines) if line.startswith("==== WHAT TO DO NEXT =")):]
-    assert "expected: cassandra-env.sh, jvm17-server.options rewritten, no restart (the same JVM arguments), nothing" \
-        " else" in \
-        " ".join(" ".join(x.split()) for x in after)
 
 
 # --- what the JVM gets from its arguments ----------------------------------------
@@ -1633,6 +1634,35 @@ def test_a_jvm_options_file_the_running_java_does_not_read_is_a_note(tmp_path):
     # the Java that reads it: a difference still
     files = node_files("50x", jvm11_edited)
     assert [d for d in check(files, "50x", java="11")["differences"] if d.startswith("jvm11-server.options")]
+
+
+def test_the_next_apply_config_s_rewrites_are_announced_and_then_none(tmp_path):
+    # (2026-11-25, owner: a difference with no effect takes the role's file) the files apply_config rewrites, why,
+    # and the ones it adds its header to; once written as the role renders them, nothing
+    files = node_files("50x", both(remote_jmx_by_hand, heap_in_jvm17, log_dir_as_itself, jvm11_edited))
+    cmdline = running(files, tmp_path)
+    out = check(files, "50x", java="17", cmdline=cmdline)
+    assert out["differences"] == []
+    writes = dict((w["file"], (w["what"], w["why"])) for w in out["writes"])
+    assert writes["cassandra-env.sh"] == ("rewritten", ["layout"])
+    assert writes["jvm-server.options"] == ("rewritten", ["heap placement"])
+    # (the stock JMX password file line commented out, the JVM never reading it: back from the next restart)
+    password = node_files("50x", lambda f: f.update({"cassandra-env.sh": f["cassandra-env.sh"].replace(
+        '\nJVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file',
+        '\n# JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file')}))
+    out2 = check(password, "50x", java="17", cmdline=running(password, tmp_path))
+    assert out2["differences"] == [] and [w["why"] for w in out2["writes"] if w["file"] == "cassandra-env.sh"] == [
+        ["layout", "the JMX password file option back (never read)"]]
+    assert writes["jvm17-server.options"] == ("rewritten", ["heap placement"])
+    assert writes["jvm11-server.options"] == ("rewritten", ["Java 17 does not read it"])
+    assert writes["cassandra.yaml"] == ("header", [])
+    assert writes["jmxremote.access"] == ("header", []) and writes["jmxremote.password"] == ("header", [])
+    diff = next(w["diff"] for w in out["writes"] if w["file"] == "jvm17-server.options")
+    assert "--Xms23552m" in diff and "--Xmx23552m" in diff
+    assert all(not w["diff"] for w in out["writes"] if w["what"] == "header")
+    inventory, layout, node = imported(files, "50x", "17", cmdline)
+    rendered = role_files(inventory, layout, files)[0]
+    assert check(dict(files, **rendered), "50x", java="17", cmdline=cmdline)["writes"] == []
 
 
 X1 = 'JVM_OPTS="$JVM_OPTS -Dx=1"'
