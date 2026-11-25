@@ -509,18 +509,17 @@ def lines(msg):
 
 
 # A step: a phase line marked cassandra_output_step, until the next phase line, plan, screen, recap or play (done
-# then), or until an error, a progress line or the end of a run that failed (its time not said then); a question
-# (pause) hides its line until the next task
+# then, its time said from 1 s on), or until an error, a progress line or the end of a run that failed (its time not
+# said then); a question (pause) hides its line until the next task
 Step = namedtuple("Step", "phase tint start")
 STEP_WIDTH = 79  # the most of a step's line
 STEP_DRAW_EVERY = 0.2  # seconds between two rewrites of a step's line on a terminal
 
 
-def step_line(phase, through, total, seconds, width=STEP_WIDTH):
-    """The line of a step going on: its phase line, the nodes through the task running out of the play's, the time
-    since it started ("Comparing the config with the inventory (24 nodes)...  4/24  1m12s"); its phase line cut
-    when they do not fit in width."""
-    figures = ("%d/%d  " % (through, total) if total else "") + duration(seconds)
+def step_line(phase, tasks, seconds, width=STEP_WIDTH):
+    """The line of a step going on: its phase line, the tasks it has done, the time since it started ("Comparing the
+    config with the inventory (24 nodes)...  task 37  1m12s"); its phase line cut when they do not fit in width."""
+    figures = "task %d  %s" % (tasks, duration(seconds))
     if len(phase) + 2 + len(figures) <= width:
         return "%s  %s" % (phase, figures)
     room = width - 2 - len(figures) - 3
@@ -564,7 +563,7 @@ class CallbackModule(DefaultCallback):
         self._progress = PROGRESS_COLOR
         self._warning = C.COLOR_WARN
         self._refused = {}  # the refused role arguments of the task running: {(role, rows): [hosts]}, said after it
-        self._seen, self._gone, self._through = set(), set(), set()  # the play's hosts with a result, out, done
+        self._tasks, self._task_said = 0, False  # the tasks the step has done; the task running gave a result
         self._lock = threading.RLock()  # the step's line and Ansible's output (results and warnings: two threads)
         atexit.register(self._footer_at_exit)  # (run after the one below: atexit runs the last registered first)
         atexit.register(self._say_refused_at_exit)  # (a run that ends before any next task or its stats)
@@ -670,10 +669,10 @@ class CallbackModule(DefaultCallback):
 
     def _step_start(self, phase):
         """A step starts (its phase line printed already in a log or a pipe): on a terminal, its line drawn under
-        the output, the nodes through the task running and its time rewritten in place."""
+        the output, the tasks it has done and its time rewritten in place."""
         with self._lock:
             self._step = Step(phase, colour(phase, None, self._progress, self._warning), self._clock())
-            self._through = set()
+            self._tasks, self._task_said = 0, False
             self._drawn = self._logged = self._step.start
             if not self._tty:
                 self._step_said = True
@@ -695,12 +694,14 @@ class CallbackModule(DefaultCallback):
             self._step_end(done=True)
 
     def _step_end(self, done):
-        """The step going on is over: done, its phase line with its time (step_done); else its phase line alone on
-        a terminal (as without a step), nothing more in a log or a pipe."""
+        """The step going on is over: done, its phase line with its time (step_done); else, or done in less than a
+        second, its phase line alone on a terminal (as without a step), nothing more in a log or a pipe."""
         with self._lock:
             step, self._step = self._step, None
             if step is None:
                 return
+            seconds = self._clock() - step.start
+            done = done and seconds >= 1
             if self._tty:
                 self._unhook()
                 self._clear()
@@ -712,37 +713,25 @@ class CallbackModule(DefaultCallback):
             if not done:  # on a terminal: its phase line alone (the log file has it already)
                 self._display.display(step.phase, color=step.tint, screen_only=True)
                 self._blank, self._ruled, self._live = False, "", None
-            for line in step_done(step.phase, self._clock() - step.start) if done else []:
+            for line in step_done(step.phase, seconds) if done else []:
                 self._line(line, color=step.tint)
             self._gap, self._step_said = True, False
 
-    def _counted(self):
-        """(the nodes through the task running, the nodes of the play still in it)."""
-        hosts = self._seen - self._gone  # (a step starts after the play's first task: every host of it has one)
-        return len(self._through & hosts), len(hosts)
-
-    def _count(self, result, out=False):
-        """A host's result for the task running (out: the play goes on without that host)."""
-        host = (getattr(result, "host", None) or result._host).get_name()
+    def _count(self, result):
+        """A result of the task running: the step's line drawn again (in a log or a pipe, once LOG_EVERY seconds
+        have gone by since the last line)."""
         with self._lock:  # (the results and the lines printed: two threads on ansible-core 2.19+)
-            self._seen.add(host)
-            if out:
-                self._gone.add(host)
+            self._task_said = True
             if self._step is None:
                 return
-            if _task(result).run_once is True:  # its one result: the task is over for every node
-                self._through = set(self._seen)
-            else:
-                self._through.add(host)
-            through, total = self._counted()
             now = self._clock()
             if self._tty:
-                self._draw(force=through == total)  # (the task over: its count shown until the next one's results)
-            elif now - self._logged >= LOG_EVERY:  # in a log or a pipe: a line every LOG_EVERY seconds
+                self._draw()
+            elif now - self._logged >= LOG_EVERY:
                 self._logged = now
                 if not self._step_said:
                     self._line("")
-                self._line(step_line(self._step.phase, through, total, now - self._step.start), color=self._step.tint)
+                self._line(step_line(self._step.phase, self._tasks, now - self._step.start), color=self._step.tint)
                 self._gap, self._step_said = True, True
 
     def _draw(self, force=False):
@@ -750,10 +739,9 @@ class CallbackModule(DefaultCallback):
         seconds at most unless forced; never two rows (cut to the terminal's width)."""
         with self._lock:
             now = self._clock()
-            if self._step is None or self._hold or self._paused or (not force and now - self._drawn < STEP_DRAW_EVERY):
+            if self._step is None or not self._tty or self._hold or self._paused or (not force and now - self._drawn < STEP_DRAW_EVERY):
                 return
-            text = step_line(self._step.phase, *self._counted(), seconds=now - self._step.start,
-                             width=min(STEP_WIDTH, self._columns() - 1))
+            text = step_line(self._step.phase, self._tasks, now - self._step.start, width=min(STEP_WIDTH, self._columns() - 1))
             text = stringc(text, self._step.tint) if self._step.tint else text
             if self._footer is None:
                 self._footer = not self._blank
@@ -1013,26 +1001,30 @@ class CallbackModule(DefaultCallback):
         self._count(result)
         return None
 
-    def _task_starts(self, task):
-        """A task starts: no node through it yet (a run_once task: as the task before until its one result)."""
-        if task.run_once is not True:
-            self._through = set()
+    def _task_starts(self):
+        """A task starts: the one before it done (one that gave no result, a meta task, not counted)."""
+        with self._lock:
+            if self._task_said:
+                self._tasks += 1
+            self._task_said = False
+            if self._tty:
+                self._draw()
 
     def v2_playbook_on_handler_task_start(self, task):
         self._say_refused()
-        self._task_starts(task)
+        self._task_starts()
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_handler_task_start(task)
         return None
 
     def v2_playbook_on_cleanup_task_start(self, task):
         self._say_refused()
-        self._task_starts(task)
+        self._task_starts()
         return super(CallbackModule, self).v2_playbook_on_cleanup_task_start(task)
 
     def v2_playbook_on_task_start(self, task, is_conditional):
         self._say_refused()
-        self._task_starts(task)
+        self._task_starts()
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_task_start(task, is_conditional)
         self._paused = task.action in _PAUSES  # a question: no step's line under it
@@ -1089,7 +1081,7 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_failed(self, result, ignore_errors=False):
         if self._verbose():
             return super(CallbackModule, self).v2_runner_on_failed(result, ignore_errors)
-        self._count(result, out=not ignore_errors and not rescued(_task(result)))
+        self._count(result)
         if ignore_errors:
             return None  # the playbook expects it (ignore_errors) and handles it
         if reported(_task(result)):  # its rescue says it (a verdict too: said once, there)
@@ -1147,7 +1139,7 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_unreachable(self, result):
         if self._verbose():
             return self._default("v2_runner_on_unreachable", result)
-        self._count(result, out=True)
+        self._count(result)
         # one form, whether the play goes on without the host or not: the first sentence of Ansible's error, then
         # the command that shows all of it (never Ansible's raw dump, never silent)
         msg = lines(_result(result).get("msg") or "")
@@ -1197,7 +1189,6 @@ class CallbackModule(DefaultCallback):
     def v2_playbook_on_play_start(self, play):
         self._say_refused()
         self._step_end(done=True)  # (its play is over)
-        self._seen, self._gone, self._through = set(), set(), set()
         self._verdicts = set()  # a verdict said again by another play is its own
         if self._verbose():
             return super(CallbackModule, self).v2_playbook_on_play_start(play)

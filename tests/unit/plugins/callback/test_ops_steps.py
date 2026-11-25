@@ -1,7 +1,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-# The steps of the ops callback: a phase line marked cassandra_output_step, the nodes through the task running and
+# The steps of the ops callback: a phase line marked cassandra_output_step, the tasks it has done and
 # the time since it started rewritten in place on a terminal, "done in" once over; a line every 5 minutes at most in
 # a log or a pipe.
 
@@ -57,21 +57,22 @@ class TerminalDisplay(object):
             sys.stdout.write(line + ("\n" if newline else ""))
 
 
-def step_callback(tty, hosts=("node1", "node2", "node3")):
-    """A quiet callback in a play of hosts, its step state set as __init__ and a play start do."""
+def step_callback(tty):
+    """A quiet callback, its step state set as __init__ does."""
     import threading
     callback = quiet_callback(tty)
     callback._display = TerminalDisplay() if tty else callback._display
-    callback._gone, callback._through, callback._refused = set(), set(), {}
-    callback._lock, callback._seen = threading.RLock(), set(hosts)  # (the play's first task: every host)
+    callback._tasks, callback._task_said, callback._refused = 0, False, {}
+    callback._lock = threading.RLock()
     callback._display.verbosity = 0
     return callback
 
 
-def through(callback, *hosts, **kwargs):
-    callback._task_starts(kwargs.get("task") or Task())
+def tasks(callback, *hosts):
+    """A task: it starts (the one before done), then a result from each host."""
+    callback._task_starts()
     for host in hosts:
-        callback._count(Result(host, kwargs.get("task")))
+        callback._count(Result(host))
 
 
 def screen(raw):
@@ -98,13 +99,12 @@ def screen(raw):
 
 
 def test_the_lines_of_a_step():
-    assert step_line(PHASE, 2, 3, 72) == PHASE + "  2/3  1m12s"
-    assert step_line(PHASE, 0, 0, 5) == PHASE + "  5s"  # the play's nodes unknown: the time alone
+    assert step_line(PHASE, 37, 72) == PHASE + "  task 37  1m12s"
     assert step_done(PHASE, 252) == [PHASE + "  done in 4m12s"]
     # 79 columns at most: the phase line cut while going on, the time under it once done
     long = "Writing the config (node1, node3, node5, node7, node9, node11, node13, node15)..."
-    assert step_line(long, 3, 8, 3725) == "Writing the config (node1, node3, node5, node7, node9, node11, n...  3/8  1h02m"
-    assert len(step_line(long, 300, 300, 3725)) <= 79 and step_line(long, 3, 8, 1, width=12) == "3/8  1s"
+    assert step_line(long, 3, 3725) == "Writing the config (node1, node3, node5, node7, node9, node11...  task 3  1h02m"
+    assert len(step_line(long, 300, 3725)) <= 79 and step_line(long, 3, 1, width=12) == "task 3  1s"
     assert step_done(long, 61) == [long, "  done in 1m01s"]
 
 
@@ -115,20 +115,18 @@ def test_a_step_on_a_terminal_rewritten_in_place_the_messages_above_it():
     real, sys.stdout = sys.stdout, out
     try:
         callback._print(PHASE, step=True)
-        assert screen(out.getvalue()) == ["", PHASE + "  0/3  0s"]  # under a blank row, no newline after it
-        through(callback, "node1")
+        assert screen(out.getvalue()) == ["", PHASE + "  task 0  0s"]  # under a blank row, no newline after it
+        tasks(callback, "node1")
         callback.now[0] += 1
-        through(callback, "node1", "node2")  # the next task: counted again from 0
-        assert screen(out.getvalue())[-1] == PHASE + "  1/3  1s"  # a rewrite every 0.2 s at most
+        tasks(callback, "node1", "node2")  # the task before done: counted at the next one's start
+        assert screen(out.getvalue())[-1] == PHASE + "  task 1  1s"
+        tasks(callback)  # a task with no result (a meta task): not counted; too soon (0.2 s): not drawn
         callback.now[0] += 0.2
-        callback._count(Result("node2"))
-        assert screen(out.getvalue())[-1] == PHASE + "  2/3  1s"
-        callback._count(Result("node3"))  # every node through the task: shown at once
-        assert screen(out.getvalue())[-1] == PHASE + "  3/3  1s"
-        callback._task_starts(Task())
+        tasks(callback, "node3")
+        assert screen(out.getvalue())[-1] == PHASE + "  task 2  1s"
         callback.now[0] += 70
         callback._print(["WARNING  something", "         its way out"])  # above the step's line
-        through(callback, "node1", "node2", "node3")
+        tasks(callback, "node1", "node2", "node3")
         callback.now[0] += 181
         callback._print("Checking the cluster from each node (3 nodes)...")  # a phase line: the step is done
     finally:
@@ -152,13 +150,14 @@ def test_a_step_on_a_terminal_ansible_own_lines_above_it():
         callback._print(PHASE, step=True)
         callback._display.display("[WARNING]: Collection community.general does not support Ansible version 2.16.19")
         callback._display.display("written to the log only", log_only=True)
-        through(callback, "node2")
+        tasks(callback, "node2")
+        callback.now[0] += 1
         callback._print("NOTHING TO DO  apply_config  prod")  # a recap: done
     finally:
         sys.stdout = real
     rows = screen(out.getvalue())
     assert rows[:3] == ["[WARNING]: Collection community.general does not support Ansible version 2.16.19", "",
-                        PHASE + "  done in 0s"], rows
+                        PHASE + "  done in 1s"], rows
     assert "NOTHING TO DO  apply_config  prod" in rows
 
 
@@ -168,7 +167,7 @@ def test_a_step_stopped_by_an_error_says_no_time():
     real, sys.stdout = sys.stdout, out
     try:
         callback._print(PHASE, step=True)
-        through(callback, "node1")
+        tasks(callback, "node1")
         callback._print(["REFUSED  apply_config  prod", "  node2: why"])
     finally:
         sys.stdout = real
@@ -186,30 +185,35 @@ def test_a_step_without_a_terminal_its_line_then_one_every_five_minutes_then_don
     callback._print(PHASE, step=True)
     for minute in range(1, 12):
         callback.now[0] += 60
-        through(callback, "node1", "node2")  # one line at 5m and at 10m, not one per result
+        tasks(callback, "node1", "node2")  # one line at 5m and at 10m, not one per result
     callback._print("WARNING  in between")
     callback.now[0] += 60
     callback._print("Checking the cluster from each node (3 nodes)...", step=True)
     callback.now[0] += 5
     callback._print("CHECK  apply_config  prod  nothing to apply")
     shown = [line for line, color, log_only in callback._display.shown]
-    assert shown[:11] == [PHASE, PHASE + "  1/3  5m00s", PHASE + "  1/3  10m00s", "", "WARNING  in between", "",
+    assert shown[:11] == [PHASE, PHASE + "  task 4  5m00s", PHASE + "  task 9  10m00s", "", "WARNING  in between", "",
                           PHASE + "  done in 12m00s", "", "Checking the cluster from each node (3 nodes)...",
                           "Checking the cluster from each node (3 nodes)...  done in 5s", ""]
     assert LOG_EVERY == 300
 
 
-def test_the_nodes_counted():
+def test_a_step_done_under_a_second_says_no_time():
     callback = step_callback(tty=False)
     callback._print(PHASE, step=True)
-    through(callback, "node1", "node2", "node3")
-    assert callback._counted() == (3, 3)
-    through(callback, "node1", task=Task(run_once=True))  # its one result: every node through it
-    assert callback._counted() == (3, 3)
-    callback._task_starts(Task())
-    callback._count(Result("node2"), out=True)  # failed or unreachable: the play goes on without it
-    callback._count(Result("node1"))
-    assert callback._counted() == (1, 2)
+    callback.now[0] += 0.9
+    callback._print("NOTHING TO DO  apply_config  prod")
+    assert [line for line, color, log_only in callback._display.shown if line.startswith(PHASE)] == [PHASE]
+    callback = step_callback(tty=True)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        callback.now[0] += 0.9
+        callback._print("Checking the cluster from each node (3 nodes)...")
+    finally:
+        sys.stdout = real
+    assert screen(out.getvalue())[:3] == [PHASE, "", "Checking the cluster from each node (3 nodes)..."]
 
 
 def test_a_step_ends_with_its_play_or_its_run():
@@ -218,9 +222,10 @@ def test_a_step_ends_with_its_play_or_its_run():
 
     class Play(object):
         hosts, order = ["node1"], None
+    callback.now[0] += 2
     callback.v2_playbook_on_play_start(Play())
-    assert callback._step is None and callback._seen == set()
-    assert callback._display.shown[-1][0] == PHASE + "  done in 0s"
+    assert callback._step is None
+    assert callback._display.shown[-1][0] == PHASE + "  done in 2s"
 
     class Stats(object):
         failures, dark = {"node2": 1}, {}
@@ -265,7 +270,7 @@ def test_a_step_in_a_log(tmp_path):
         cassandra_output_gap: true
         cassandra_output_step: true
     - name: Some work
-      ansible.builtin.command: /bin/true
+      ansible.builtin.command: sleep 1
       changed_when: false
     - name: A note
       ansible.builtin.debug:
@@ -283,6 +288,9 @@ def test_a_step_in_a_log(tmp_path):
       vars:
         cassandra_output: true
         cassandra_output_step: true
+    - name: Some more work
+      ansible.builtin.command: sleep 1
+      changed_when: false
     - name: The end
       ansible.builtin.debug:
         msg: ["CHECK  apply_config  c  nothing to apply"]
@@ -294,8 +302,8 @@ def test_a_step_in_a_log(tmp_path):
     assert rc == 0, output
     lines = [line for line in output.splitlines() if not line.startswith(("====", "[WARNING]", "[DEPRECATION"))]
     assert lines[:9] == ["Comparing the config with the inventory (2 nodes)...", "", "WARNING  a note", "",
-                         re.sub(r"\d+s$", "0s", lines[4]), "", "Checking the cluster from each node (2 nodes)...",
-                         re.sub(r"\d+s$", "0s", lines[7]), ""], output
+                         lines[4], "", "Checking the cluster from each node (2 nodes)...",
+                         lines[7], ""], output
     assert re.match(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  done in \d+s$", lines[4]), output
     assert re.match(r"Checking the cluster from each node \(2 nodes\)\.\.\.  done in \d+s$", lines[7]), output
 
@@ -351,15 +359,15 @@ def test_a_step_on_a_terminal(tmp_path):
         output += data
     os.waitpid(pid, 0)
     raw = output.decode(errors="replace").replace("\r\n", "\n")
-    assert re.search(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  \d/2  \ds", raw), raw  # going on
+    assert re.search(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  task \d+  \d+s", raw), raw  # going on
     rows = [row for row in screen(raw) if row.strip() and not row.startswith("====")]
     done = [row for row in rows if row.startswith("Comparing")]
     assert len(done) == 1 and re.match(r"Comparing .*\.\.\.  done in \d+s$", done[0]), rows
     assert rows.index(done[0]) == len(rows) - 2 and rows[-1].startswith("CHECK  "), rows
-    assert not any(re.search(r"\d/2  \ds", row) for row in rows), rows  # nothing left of the lines going on
+    assert not any(re.search(r"task \d+  \d+s", row) for row in rows), rows  # nothing left of the lines going on
     with open(str(tmp_path / "run.log"), encoding="utf-8") as f:
         log = f.read()
-    assert re.search(r"Comparing .*\.\.\.  done in \d+s", log) and not re.search(r"\d/2  \ds", log), log
+    assert re.search(r"Comparing .*\.\.\.  done in \d+s", log) and not re.search(r"task \d+  \d+s", log), log
 
 
 def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():
@@ -373,10 +381,10 @@ def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():
         callback._print(PHASE, step=True)
         assert callback._display.shown[-1] == (PHASE, None, True)  # the log file: its start
         callback._display.display("Answer: ", None, False, False, False, False)  # (positional, as Display's)
-        through(callback, "node1", "node2", "node3")
+        tasks(callback, "node1", "node2", "node3")
         assert out.getvalue().endswith("Answer: ")  # nothing drawn after it
         callback._display.display("yes")
-        assert screen(out.getvalue())[-1] == PHASE + "  3/3  0s"
+        assert screen(out.getvalue())[-1] == PHASE + "  task 0  0s"
         callback._pid = -1  # as in a forked worker
         before = out.getvalue()
         callback._display.display("a worker's line")
@@ -386,3 +394,19 @@ def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():
     finally:
         sys.stdout = real
     assert not any(r.endswith("0s") for r in screen(out.getvalue()))
+
+
+def test_a_step_without_a_terminal_writes_nothing_of_its_own_on_the_output():
+    """No rewrite in a log or a pipe: the lines go through Ansible's display only (a task start draws nothing)."""
+    callback = step_callback(tty=False)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        for dummy in range(3):
+            callback.now[0] += 1
+            tasks(callback, "node1")
+        callback._print("NOTHING TO DO  apply_config  prod")
+    finally:
+        sys.stdout = real
+    assert out.getvalue() == ""
