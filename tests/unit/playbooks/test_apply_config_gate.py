@@ -302,8 +302,8 @@ def test_the_other_compares_follow_apply_only():
     (None, list(PARTS), []),
     ("config", ["config", "unit"], ["java", "linux", "install", "repository", "medusa", "firewall", "axonops"]),
     ("config, linux", ["config", "unit", "linux"], ["java", "install", "repository", "medusa", "firewall", "axonops"]),
-    (["linux", "config", "unit"], ["config", "unit", "linux"], ["java", "install", "repository", "medusa", "firewall",
-                                                               "axonops"]),
+    (["linux", "config", "unit"], ["config", "unit", "linux"],
+     ["java", "install", "repository", "medusa", "firewall", "axonops"]),
 ])
 def test_apply_only_gives_the_parts(given, parts, left_out):
     said = cassandra_apply_only(given)
