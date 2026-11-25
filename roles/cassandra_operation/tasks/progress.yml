@@ -102,14 +102,14 @@
         - not (cassandra_progress_file_stat.stat.readable and cassandra_progress_file_stat.stat.writeable)
 
     # _cassandra_progress_parts: what the run applies (apply_config, apply_only), next to it, written first: a .done
-    # always has it
+    # always has it (a resume: the interrupted run's, kept; none, an earlier version's run: this one's, as given)
     - name: Record what the run applies with the progress file
       ansible.builtin.copy:
         content: "{{ _cassandra_progress_parts }}\n"
         dest: "{{ cassandra_progress_file | regex_replace('[.]done$', '.parts') }}"
         mode: "0644"
+        force: "{{ not _progress_resuming | bool }}"
       when:
-        - not _progress_resuming | bool
         - _cassandra_progress_parts is defined
         - not ansible_check_mode
       diff: false  # the run's bookkeeping

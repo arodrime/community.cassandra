@@ -13,15 +13,8 @@
   # checks saying what fails
   ignore_errors: true
   vars:
-    # the ones checks.yml looks up by name
-    _by_name: >-
-      {%- set out = query('ansible.builtin.varnames', '^cassandra_(env|logback)_extra_lines$') -%}
-      {%- for prefix in ['cassandra_jvm_', 'cassandra_jvm8_', 'cassandra_jvm11_', 'cassandra_jvm17_'] -%}
-      {%-   for name in _names -%}{%- set _ = out.append(prefix ~ name) -%}{%- endfor -%}
-      {%- endfor -%}
-      {{ out }}
-    _names: [max_tenuring_threshold, g1_heap_region_size, g1_new_size_percent, g1_rset_updating_pause_time_percent,
-             max_gc_pause_millis, initiating_heap_occupancy_percent, removed_options, extra_options]
+    # the ones checks.yml looks up by name: every one of these patterns the node has (_cassandra_config_check_names)
+    _by_name: "{{ query('ansible.builtin.varnames', *_cassandra_config_check_names) }}"
 
 - name: Group the nodes whose checks read the same values
   ansible.builtin.set_fact:
@@ -39,7 +32,10 @@
     - name: Check the variables of these nodes
       ansible.builtin.include_tasks: checks.yml
   rescue:
+    # (ansible-core 2.17+, any_errors_fatal: a node whose own checks passed comes here too when another failed: not
+    # its failure, nothing to say)
     - name: Stop the nodes these checks stand for
+      when: ansible_failed_result is defined
       ansible.builtin.fail:
         msg: >-
           {{ _msg if _msg is match('REFUSED ') else _cassandra_config_checked_names ~ ': ' ~ _msg }}

@@ -102,6 +102,8 @@
     # shown before the run was confirmed, and in its recap at the end
     _cassandra_config_quiet: true
     _cassandra_change_report_quiet: true
+    # (apply_full: the users' ~/.cassandra files not compared, written as before the plan compared them)
+    _cassandra_config_user_files_compare: "{{ not _cassandra_apply_full | default(false) | bool }}"
   when:
     - not ansible_check_mode
     - not cassandra_apply_config_stage | default(false) | bool

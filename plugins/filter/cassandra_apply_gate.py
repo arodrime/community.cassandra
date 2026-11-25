@@ -18,7 +18,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import os
-import textwrap
+
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # the parts of a run, in the order the compare looks at them
 PARTS = ("config", "unit", "java", "linux", "install", "repository", "medusa", "firewall", "axonops")
@@ -49,10 +50,10 @@ def cassandra_apply_only(value, command=""):
         command or "ansible-playbook community.cassandra.apply_config",
         ",".join(["config"] + [n for n in PARTS if n in names and n != "config"]))]
     if unknown:
-        refused = ["apply_only: %s: not a part of apply_config" % ", ".join(unknown),
-                   "its parts: %s" % ", ".join(PARTS)] + way_out
+        refused = ["apply_only: not a part of apply_config:"] + ["  " + n for n in unknown] + ["its parts:"] + [
+            "  " + p for p in PARTS] + way_out
     elif "config" not in names:
-        refused = ["apply_only: %s: config is not among them" % ", ".join(names),
+        refused = ["apply_only: config is not among the parts given",
                    "config is always compared: the restart decision reads it"] + way_out
     else:
         refused = []
@@ -64,12 +65,13 @@ def _on(value):
     return str(value).lower() in ("true", "yes", "1", "on")
 
 
-def cassandra_apply_only_stops(names, hostvars, parts, command=""):
+def cassandra_apply_only_stops(names, hostvars, parts, command="", over=""):
     """names: the nodes of the run; hostvars: their variables (cassandra_apply_config_version: a newer release of the
     series to install when its kind is release; cassandra_axonops_enabled; cassandra_java_plan_todo: the node moves to
-    another Java); parts: the run's (cassandra_apply_only); command: the command of this run, without apply_only ->
-    the lines of the refusal, [] when the parts cover them: the release is installed by install, cassandra-env.sh
-    loads the AxonOps agent its part installs, the Java move is java's. Its way out: the command with those parts too."""
+    another Java); parts: the run's (cassandra_apply_only); command: the command of this run, without apply_only;
+    over: a resume's, the command that starts over (a resume keeps the interrupted run's parts) -> the lines of the
+    refusal, [] when the parts cover them: the release is installed by install, cassandra-env.sh loads the AxonOps
+    agent its part installs, the Java move is java's. Its way out: the command with those parts too."""
     needed = (("install", "a newer release of its series to install",
                lambda node: (node.get("cassandra_apply_config_version") or {}).get("kind") == "release"),
               ("axonops", "cassandra-env.sh loads the AxonOps agent", lambda node: _on(node.get("cassandra_axonops_enabled"))),
@@ -78,26 +80,31 @@ def cassandra_apply_only_stops(names, hostvars, parts, command=""):
     for part, why, needs in needed:
         nodes = [name for name in names if needs(hostvars[name])]
         if nodes and part not in parts:
-            refused.append("%s: %s: apply_only leaves %s out" % (", ".join(nodes), why, part))
+            refused += ["apply_only leaves %s out: %s on" % (part, why), "  " + out.nodes(nodes)]
             more.append(part)
     if refused:
-        refused += ["WAY OUT  run with those parts too:", "  %s -e apply_only=%s" % (
-            command or "ansible-playbook community.cassandra.apply_config",
-            ",".join(p for p in PARTS if p in parts or p in more))]
+        with_them = ",".join(p for p in PARTS if p in parts or p in more)
+        if over:
+            refused += ["a resumed run keeps the parts of the interrupted one: start over",
+                        "WAY OUT  start over with those parts too:", "  %s -e apply_only=%s" % (over, with_them)]
+        else:
+            refused += ["WAY OUT  run with those parts too:", "  %s -e apply_only=%s" % (
+                command or "ansible-playbook community.cassandra.apply_config", with_them)]
     return refused
 
 
 def cassandra_apply_resume_refusal(resumed, recorded, current, resume_command, over_command):
     """A resume (-e cassandra_rolling_resume=true) of apply_config with other parts than the interrupted run's ->
     the lines of its refusal, [] when it may go on. resumed: the progress file it resumes; recorded: the parts the
-    interrupted run applied ('' not recorded: an earlier version's run, or one stopped before; all: every part);
+    interrupted run applied ('' not recorded: a run of an earlier version, which applied every part; all: every part);
     current: this run's (all: every part, '': no -e apply_only given); resume_command: the command that resumes with
-    the parts recorded (<parts> when none); over_command: the one that starts over."""
+    the parts recorded (all when none); over_command: the one that starts over."""
     if not recorded:
         if current:  # (given with apply_only: the operator says which)
             return []
-        return ["%s: the parts the interrupted run applied are not recorded" % os.path.basename(resumed),
-                "WAY OUT  resume giving them (all: every part):", "  " + resume_command,
+        return ["%s: no record of the parts the interrupted run applied" % os.path.basename(resumed),
+                "(a run of an earlier version: every part)",
+                "WAY OUT  resume with every part:", "  " + resume_command,
                 "WAY OUT  or start over without resuming:", "  " + over_command]
     if recorded == (current or "all"):
         return []
@@ -125,8 +132,7 @@ def cassandra_apply_gate_lines(gates, left_out=None, full=False, verify=False):
         if verify:
             lines.append("apply_verify: the role compared them too, its facts the same")
     if left_out:
-        lines += textwrap.wrap("not checked (apply_only): %s" % ", ".join(left_out), 79, subsequent_indent="  ",
-                               break_long_words=False, break_on_hyphens=False)
+        lines += ["not checked (apply_only):"] + ["  " + p for p in left_out]
     return lines
 
 

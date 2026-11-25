@@ -73,11 +73,16 @@
         _cassandra_apply_full: "{{ apply_full | default(false) | bool }}"
         _cassandra_apply_verify: "{{ apply_verify | default(false) | bool }}"
         _cassandra_apply_command: "{{ _command }}"
+        # (a resume: the command that starts over, the run's parts kept with the interrupted one's)
+        _cassandra_apply_command_over: >-
+          {{ 'apply_config' | community.cassandra.cassandra_command(options=_options, **_args)
+             if cassandra_rolling_resume | default(false) | bool else '' }}
       vars:
-        # this run's command, for the ways out that give it with other options (--check kept)
+        # this run's command, for the ways out that give it with other options (--check, a resume kept)
         _command: >-
-          {{ 'apply_config' | community.cassandra.cassandra_command(options=['--check'] if ansible_check_mode else [],
-                                                                   **_args) }}
+          {{ 'apply_config' | community.cassandra.cassandra_command(options=_options, extra=_extra, **_args) }}
+        _options: "{{ ['--check'] if ansible_check_mode else [] }}"
+        _extra: "{{ ['-e cassandra_rolling_resume=true'] if cassandra_rolling_resume | default(false) | bool else [] }}"
         _args:
           inventory: "{{ ansible_inventory_sources | default([]) }}"
           default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
@@ -144,7 +149,7 @@
           cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
         _resume: >-
           {{ 'apply_config' | community.cassandra.cassandra_command(
-               extra=['-e cassandra_rolling_resume=true', '-e apply_only=' ~ (_recorded or '<parts>')], **_args) }}
+               extra=['-e cassandra_rolling_resume=true', '-e apply_only=' ~ (_recorded or 'all')], **_args) }}
         _said: >-
           {{ _resumed | community.cassandra.cassandra_apply_resume_refusal(_recorded, _current, _resume,
                'apply_config' | community.cassandra.cassandra_command(**_args)) }}
@@ -158,7 +163,8 @@
       when: _cassandra_apply_parts.left_out | length > 0
       vars:
         _cassandra_notes_in_plan: true
-        _note: "WARNING  not checked (apply_only): {{ _cassandra_apply_parts.left_out | join(', ') }}"
+        _note: "WARNING  not checked (apply_only):{{ _cassandra_apply_parts.left_out | map('regex_replace', '^', _nl ~ '  ') | join }}"
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
 
     # What apply_config covers besides the files (plugin_utils cassandra_apply_config_coverage: every variable of the
     # roles in its category): what it cannot do on a live cluster, or leaves to a procedure of its own, stops the run
@@ -513,7 +519,8 @@
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
         _said: >-
           {{ ansible_play_hosts | community.cassandra.cassandra_apply_only_stops(hostvars, _cassandra_apply_parts.parts,
-                                                                                  _cassandra_apply_command) }}
+                                                                                  _cassandra_apply_command,
+                                                                                  _cassandra_apply_command_over) }}
 
 
     # The AxonOps agent (cassandra_axonops_enabled): a Java move swaps its Java agent package, which is not supported

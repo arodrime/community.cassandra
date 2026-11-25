@@ -317,6 +317,12 @@ _cassandra_config_header_items: >-
 # the nodes the checks (checks.yml) are run for: this one, or those that share the values they read (plan.yml)
 _cassandra_config_checked_names: "{{ _cassandra_config_checked | default([inventory_hostname]) | community.cassandra.cassandra_node_list }}"
 
+# the variables checks.yml looks up by a name it builds (the JVM options of each Java, the former extra lines): every
+# one the node has that these patterns match is in the key of its checks (checks_once.yml)
+_cassandra_config_check_names:
+  - '^cassandra_jvm[0-9]*_'
+  - '^cassandra_(env|logback)_extra_lines$'
+
 # The variables cassandra_config's checks (checks.yml) read, the role variables they read included: the nodes with
 # the same values get the same verdicts, so apply_config checks them once for those nodes (plan.yml). A unit test
 # keeps the list whole (test_apply_config_gate.py)
@@ -414,10 +420,6 @@ _cassandra_config_check_vars:
   - cassandra_jmx_ssl_protocols
   - cassandra_jmx_ssl_truststore
   - cassandra_jmx_ssl_truststore_password
-  - cassandra_jvm11_gc
-  - cassandra_jvm17_gc
-  - cassandra_jvm8_gc
-  - cassandra_jvm_gc
   - cassandra_key_cache_size
   - cassandra_local_jmx
   - cassandra_log_audit_dir

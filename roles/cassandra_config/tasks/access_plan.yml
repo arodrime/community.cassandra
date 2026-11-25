@@ -135,6 +135,7 @@
           {{ {'step': 'users', 'users': _files | community.cassandra.cassandra_config_user_request(_texts)} | to_json }}
       register: cassandra_config_users_read
       changed_when: false
+      failed_when: false  # (said below: no_log would hide why)
       check_mode: false  # reads only
       no_log: true  # the files rendered hold passwords
       vars:
@@ -156,7 +157,11 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _read: "{{ cassandra_config_users_read.stdout | from_json }}"
+        # (the script's answer; its Python failing: no answer, its last line of error)
+        _read: >-
+          {{ cassandra_config_users_read.stdout | from_json if cassandra_config_users_read.stdout | default('') is match('[{]')
+             else {'error': (cassandra_config_users_read.stderr | default('', true) | trim).split(_nl) | last
+                            | default('rc ' ~ cassandra_config_users_read.rc | default('?'), true)} }}
         _said:
           - "the users' ~/.cassandra files (cqlsh, nodetool) could not be compared: {{ _read.error }}"
           - "WAY OUT  fix what it says on {{ inventory_hostname }} (the users of cassandra_cqlsh_credentials, their home), then run again"
