@@ -515,9 +515,12 @@ def test_a_users_file_to_write_schedules_the_node():
 def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     play = find_play(PLAYBOOK, "Set up the progress file")
     record = find_task(play, "Record the parts of the run with its progress file")
-    refuse = find_task(play, "Refuse to resume with other parts than the interrupted run")
     names = [t["name"] for t in play["tasks"]]
-    assert names.index("Set up the progress file") < names.index(refuse["name"]) < names.index(record["name"])
+    assert names.index("Set up the progress file") < names.index(record["name"])
+    find = find_play(PLAYBOOK, "Find what each node needs")
+    refuse = find_task(find, "Refuse to resume with other parts than the interrupted run")
+    pick = find_task(find, "Find the progress file a resume picks")
+    assert pick["ansible.builtin.include_role"]["tasks_from"] == "progress_find.yml"
     done = tmp_path / "c-apply_config-20261125T120000.done"
     parts = cassandra_apply_only("config,linux")
     assert render(record["ansible.builtin.copy"]["dest"], cassandra_progress_file=str(done)) == str(
@@ -525,11 +528,14 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=parts) == "config,unit,linux\n"
     assert render(record["ansible.builtin.copy"]["content"], _cassandra_apply_parts=cassandra_apply_only("")) == "all\n"
     assert "not cassandra_rolling_resume | default(false) | bool" in record["when"]
+    found = {"files": [{"path": str(tmp_path / "old.done"), "mtime": 1}, {"path": str(done), "mtime": 2}]}
+    assert render(refuse["vars"]["_resumed"], cassandra_progress_found=found) == str(done)
+    assert render(refuse["vars"]["_resumed"], cassandra_progress_found={"skipped": True}) == ""
 
     def said(given, recorded):
         if recorded is not None:
             (tmp_path / "c-apply_config-20261125T120000.parts").write_text(recorded)
-        variables = dict(cassandra_progress_file=str(done), _cassandra_apply_parts=cassandra_apply_only(given))
+        variables = dict(_resumed=str(done), _cassandra_apply_parts=cassandra_apply_only(given))
         rec, cur = (render(refuse["vars"][n], **variables) for n in ("_recorded", "_current"))
         return None if rec == cur else [render(line, _recorded=rec, _current=cur) for line in refuse["vars"]["_said"]]
     assert said("config,linux", None) == ["the interrupted run applied every part", "this one: apply_only=config,unit,linux",
@@ -538,6 +544,30 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
     assert said("", None) is None
     assert said("linux,config", "config,unit,linux\n") is None
     assert said("", "config,unit,linux\n")[-1] == "WAY OUT  resume with -e apply_only=config,unit,linux"
+
+
+WRITERS_ANYWHERE = WRITERS + ("ansible.builtin.include_tasks", "ansible.builtin.include_role", "ansible.builtin.import_tasks")
+
+
+def test_a_refused_resume_writes_nothing():
+    # the check of a resume's parts comes before any task of the run that may write (the JMX password file, a mark
+    # forgotten, the progress file and its parts, the plays that apply): it reads only, before them
+    find = find_play(PLAYBOOK, "Find what each node needs")
+    tasks = [t for t, dummy in walk(find["tasks"])]
+    names = [t.get("name") for t in tasks]
+    at = names.index("Refuse to resume with other parts than the interrupted run")
+    before = [t for t in tasks[:at] if module(t) in WRITERS_ANYWHERE]
+    reads = {"Load the role defaults", "Read the installed Cassandra package", "Read the tokens of the ring",
+             "Find the progress file a resume picks"}
+    assert sorted(t["name"] for t in before if t["name"] not in reads) == []
+    for t in before:
+        if module(t) == "ansible.builtin.command":
+            assert t.get("changed_when") is False and t.get("check_mode") is False, t["name"]
+    # the shared find reads only
+    for t, dummy in walk(load_tasks(os.path.join(TOP, "roles", "cassandra_operation", "tasks", "progress_find.yml"))):
+        assert module(t) in ("ansible.builtin.stat", "ansible.builtin.set_fact", "ansible.builtin.find"), t["name"]
+    # and the plays after it are where the run writes
+    assert PLAYBOOK.index(find) == 1 and PLAYBOOK[0]["ansible.builtin.import_playbook"] == "community.cassandra.preflight"
 
 
 def test_the_users_files_in_the_differences():

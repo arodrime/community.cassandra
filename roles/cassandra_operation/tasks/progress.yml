@@ -14,27 +14,9 @@
     # a play that must start over whatever -e cassandra_rolling_resume says (extra vars beat the others)
     _progress_resuming: "{{ _cassandra_progress_resume | default(cassandra_rolling_resume) }}"
   block:
-    - name: Check the inventory's dir
-      ansible.builtin.stat:
-        path: "{{ inventory_dir }}"
-      register: cassandra_progress_inventory_dir_stat
-      when:
-        - cassandra_rolling_progress_dir | default('', true) == ''
-        - inventory_dir | default('', true) not in ['', 'None']  # 'None' with -i host1,host2
-
-    # made absolute here, on the controller, like import_dir: a
-    # relative path is from the dir the playbook is run from
-    - name: Pick the progress dir
-      ansible.builtin.set_fact:
-        cassandra_progress_dir: >-
-          {{ _given if _given is abs else _given | realpath }}
-      vars:
-        _inv: "{{ cassandra_progress_inventory_dir_stat.stat | default({}) }}"
-        _inv_progress: "{{ inventory_dir ~ '/.cassandra_progress' if _inv.exists | default(false) else '' }}"
-        _given: >-
-          {{ cassandra_rolling_progress_dir | default('', true) | expanduser
-             or ((inventory_dir if _inv.writeable | default(false) or (_inv_progress != '' and _inv_progress is directory)
-                  else '.') ~ '/.cassandra_progress') }}
+    # (its dir, and the file a resume picks: progress_find.yml, shared with apply_config's check of a resume)
+    - name: Find the progress dir and the file to resume
+      ansible.builtin.include_tasks: progress_find.yml
 
     # A run that became root on the controller leaves a dir the user cannot write
     - name: Check the progress dir
@@ -83,15 +65,6 @@
       loop_control:
         label: "{{ item.path | basename }}"
       diff: false
-
-    - name: Find the progress file to resume
-      ansible.builtin.find:
-        paths: "{{ cassandra_progress_dir }}"
-        patterns: "{{ _prefix }}*.done"
-      register: cassandra_progress_found
-      when:
-        - _progress_resuming | bool
-        - cassandra_progress_dir_stat.stat.exists or not ansible_check_mode
 
     - name: Stop if there is nothing to resume
       ansible.builtin.fail:

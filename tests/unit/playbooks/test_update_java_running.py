@@ -530,6 +530,6 @@ def test_the_progress_dir_resolved_as_progress_yml_does(tmp_path, monkeypatch):
     monkeypatch.chdir(str(tmp_path))
     dirs = _template(check["vars"]["_progress_dirs"], {"cassandra_rolling_progress_dir": "progress"})
     assert dirs == [str(tmp_path / "progress")]
-    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "progress.yml"),
+    with open(os.path.join(os.path.dirname(PLAYBOOK), "..", "roles", "cassandra_operation", "tasks", "progress_find.yml"),
               encoding="utf-8") as f:
         assert "_given if _given is abs else _given | realpath" in f.read()

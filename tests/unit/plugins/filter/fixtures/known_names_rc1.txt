@@ -1037,6 +1037,7 @@ cassandra_progress_dir_stat	both
 cassandra_progress_done	both
 cassandra_progress_file	both
 cassandra_progress_file_stat	both
+cassandra_progress_find_dir_stat	both
 cassandra_progress_found	both
 cassandra_progress_inventory_dir_stat	both
 cassandra_progress_line	both

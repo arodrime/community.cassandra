@@ -88,6 +88,46 @@
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
+    # apply_only: a resumed run (-e cassandra_rolling_resume=true) applies the parts the interrupted one did (recorded
+    # next to its progress file, the one the resume picks: progress_find.yml; none: every part, as before apply_only).
+    # Here, before anything is written (the JMX password file, a mark forgotten); --check too
+    - name: Find the progress file a resume picks
+      ansible.builtin.include_role:
+        name: community.cassandra.cassandra_operation
+        tasks_from: progress_find.yml
+      vars:
+        cassandra_service_node_action: apply_config
+        _prefix: "{{ lookup('community.cassandra.cassandra_hosts') }}-apply_config-"
+        _progress_resuming: true
+      when:
+        - cassandra_rolling_resume | default(false) | bool
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no resume
+
+    - name: Refuse to resume with other parts than the interrupted run
+      ansible.builtin.fail:
+        msg: "{{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+      run_once: true
+      when:
+        - cassandra_rolling_resume | default(false) | bool
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: no resume
+        - _resumed | length > 0
+        - _recorded != _current
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+        # (the file the resume picks; none: nothing to resume, said by the progress file's own check)
+        _resumed: "{{ (cassandra_progress_found.files | default([]) | sort(attribute='mtime') | last | default({})).path | default('') }}"
+        _recorded: >-
+          {{ lookup('ansible.builtin.file', _resumed | regex_replace('[.]done$', '.parts'), errors='ignore')
+             | default('', true) | trim or 'all' }}
+        _current: "{{ _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}"
+        _said:
+          - "the interrupted run applied {{ 'every part' if _recorded == 'all' else 'apply_only=' ~ _recorded }}"
+          - "this one: {{ 'every part' if _current == 'all' else 'apply_only=' ~ _current }}"
+          - "a resumed run applies the parts the interrupted one did"
+          - "WAY OUT  resume {{ 'without -e apply_only' if _recorded == 'all' else 'with -e apply_only=' ~ _recorded }}"
+
     # in the plan of a real run, said under --check (the checks' notes)
     - name: Say the parts left out
       ansible.builtin.include_role:
@@ -1728,29 +1768,6 @@
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_operation
         tasks_from: progress.yml
-
-    # apply_only: a resumed run applies the parts the interrupted one did (recorded next to its progress file, none:
-    # every part, as before apply_only)
-    - name: Refuse to resume with other parts than the interrupted run
-      ansible.builtin.fail:
-        msg: "{{ ('apply_config  ' ~ _cluster) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
-      run_once: true
-      when:
-        - cassandra_rolling_resume | default(false) | bool
-        - _recorded != _current
-      vars:
-        cassandra_output: true  # a verdict: its msg as is (ops callback)
-        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
-        _recorded: >-
-          {{ lookup('ansible.builtin.file', cassandra_progress_file | regex_replace('[.]done$', '.parts'), errors='ignore')
-             | default('', true) | trim or 'all' }}
-        _current: "{{ _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}"
-        _said:
-          - "the interrupted run applied {{ 'every part' if _recorded == 'all' else 'apply_only=' ~ _recorded }}"
-          - "this one: {{ 'every part' if _current == 'all' else 'apply_only=' ~ _current }}"
-          - "a resumed run applies the parts the interrupted one did"
-          - "WAY OUT  resume {{ 'without -e apply_only' if _recorded == 'all' else 'with -e apply_only=' ~ _recorded }}"
 
     - name: Record the parts of the run with its progress file
       ansible.builtin.copy:

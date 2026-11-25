@@ -1,0 +1,49 @@
+---
+# The progress dir of a rolling operation (cassandra_progress_dir) and, resuming (-e cassandra_rolling_resume=true),
+# the progress files it may resume (cassandra_progress_found: the latest is the one): read only, on the controller.
+# Run by progress.yml, and by apply_config before any change (a resume with other parts is refused there).
+#   _prefix: <cluster>-<operation>-; _progress_resuming: whether this run resumes
+- name: Find the progress dir and the file to resume
+  run_once: true
+  delegate_to: localhost
+  become: false  # the controller: no sudo there
+  vars:
+    ansible_become: false  # an inventory ansible_become beats the become keyword
+  block:
+    - name: Check the inventory's dir
+      ansible.builtin.stat:
+        path: "{{ inventory_dir }}"
+      register: cassandra_progress_inventory_dir_stat
+      when:
+        - cassandra_rolling_progress_dir | default('', true) == ''
+        - inventory_dir | default('', true) not in ['', 'None']  # 'None' with -i host1,host2
+
+    # made absolute here, on the controller, like import_dir: a
+    # relative path is from the dir the playbook is run from
+    - name: Pick the progress dir
+      ansible.builtin.set_fact:
+        cassandra_progress_dir: >-
+          {{ _given if _given is abs else _given | realpath }}
+      vars:
+        _inv: "{{ cassandra_progress_inventory_dir_stat.stat | default({}) }}"
+        _inv_progress: "{{ inventory_dir ~ '/.cassandra_progress' if _inv.exists | default(false) else '' }}"
+        _given: >-
+          {{ cassandra_rolling_progress_dir | default('', true) | expanduser
+             or ((inventory_dir if _inv.writeable | default(false) or (_inv_progress != '' and _inv_progress is directory)
+                  else '.') ~ '/.cassandra_progress') }}
+
+    - name: Look at the progress dir
+      ansible.builtin.stat:
+        path: "{{ cassandra_progress_dir }}"
+        follow: true  # a link to a dir is fine
+      register: cassandra_progress_find_dir_stat
+
+    - name: Find the progress file to resume
+      ansible.builtin.find:
+        paths: "{{ cassandra_progress_dir }}"
+        patterns: "{{ _prefix }}*.done"
+        age: "-{{ cassandra_rolling_progress_days }}d"  # (not one the old ones' cleanup removes)
+      register: cassandra_progress_found
+      when:
+        - _progress_resuming | bool
+        - cassandra_progress_find_dir_stat.stat.exists
