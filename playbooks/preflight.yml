@@ -92,10 +92,23 @@
         _absent: "{{ query('community.cassandra.cassandra_nodes', state='absent') if _kind == 'plan' else [] }}"
 
     # after the phase line: a node that does not answer (ssh waiting on a connection whose host froze) leaves the
-    # run on that line, not silent
+    # run on that line, not silent. Not every fact: the ones the collection reads (the OS, the network, the
+    # virtualization), then the few hardware ones below. A node's facts are copied for each task on ansible-core
+    # 2.16, and read for every node by the checks that read every node: their size multiplies those costs
     - name: Gather facts
       ansible.builtin.setup:
+        gather_subset: [min, network, virtual]
       tags: [always]  # under --tags too, as a play's own gathering
+
+    # the mounts (the data directories' disks), the memory and the processors (an inventory may size the heap or
+    # concurrent_* with them); not the devices, the partitions and the like, the bulk of the hardware facts. An
+    # inventory that templates another hardware fact gathers it itself
+    - name: Gather the hardware facts read
+      ansible.builtin.setup:
+        gather_subset: ['!all', '!min', hardware]
+        filter: [ansible_mounts, ansible_memtotal_mb, ansible_memfree_mb, ansible_swaptotal_mb, ansible_swapfree_mb,
+                 ansible_processor*]
+      tags: [always]  # under --tags too
 
     # An unreachable host would silently be left out of the rest of the run
     - name: Every node answers

@@ -23,8 +23,7 @@
 - name: Upgrade checks
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   any_errors_fatal: true  # one node refused: none is changed
-  gather_facts: true
-  gather_subset: [network, hardware]
+  gather_facts: false  # gathered by the preflight (its mounts too)
   become: true
   vars:
     _phase: "{{ cassandra_upgrade_phase | default('') }}"
@@ -916,6 +915,7 @@
 - name: Upgrade, one node at a time
   hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') in ['canary', 'rolling'] else 'localhost:!localhost' }}"
   serial: 1
+  gather_facts: false  # gathered by the preflight (a play's own: every fact again, at each node's turn)
   any_errors_fatal: true
   become: true
   vars:
@@ -974,6 +974,7 @@
 - name: Rewrite the sstables, one node at a time
   hosts: "{{ 'cassandra_upgrade_nodes' if cassandra_upgrade_phase | default('') == 'sstables' else 'localhost:!localhost' }}"
   serial: 1
+  gather_facts: false  # gathered by the preflight (a play's own: every fact again, at each node's turn)
   any_errors_fatal: true
   become: true
   tasks:

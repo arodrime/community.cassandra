@@ -1,4 +1,6 @@
 ---
+breaking_changes:
+- "operation playbooks (their preflight) - the facts gathered are the ``min``, ``network`` and ``virtual`` subsets, and of the hardware ones only ``ansible_mounts``, ``ansible_memtotal_mb``, ``ansible_memfree_mb``, ``ansible_swaptotal_mb``, ``ansible_swapfree_mb`` and ``ansible_processor*``; the other hardware facts (``ansible_devices``, ``ansible_device_links``, ``ansible_lvm``...) are no longer gathered, and rolling_restart, rolling_reboot, update_java and upgrade no longer gather every fact again after the preflight, at each node's turn. An inventory that templates another hardware fact sets it itself, or runs its own ``ansible.builtin.setup`` (with ``gather_subset: [hardware]``) before the operation."
 minor_changes:
 - "cassandra_nodes lookup - new option ``memo``: the state of every host of the group, read once, which a playbook keeps in ``_cassandra_nodes_memo`` for its run; later calls read it instead of every host's variables while the group has the same hosts."
 trivial:

@@ -25,7 +25,7 @@ FACTS_LEFT = {
 FACTS_MODULES = ("ansible.builtin.package_facts", "ansible.builtin.service_facts", "package_facts", "service_facts")
 # the tasks of the playbooks and roles (each task of a block, the block not counted): a task more costs every node
 # a build of its variables, run or skipped. Raise it with the reason in the commit, or lower it
-TASKS_MAX = 2004  # +1: the preflight reads the cluster's nodes once for the run (cassandra_nodes memo)
+TASKS_MAX = 2005  # +1: the preflight gathers the few hardware facts read on their own (a filtered setup)
 
 
 def tasks(items):
@@ -116,3 +116,21 @@ def test_the_view_is_noted_before_any_task_reads_it():
     readers = [i for i, t in enumerate(find) if "_cassandra_apply_config_view" in yaml.safe_dump(t) and i != first]
     assert readers and min(readers) > first
     assert names.index("Note what this node needs") < first  # (the plan it reads)
+
+
+def test_the_preflight_gathers_the_facts_read_only():
+    # the OS, network and virtualization subsets, then the few hardware facts the collection and inventories read:
+    # each node's facts are copied for each task on 2.16, and read for every node by the checks of every node
+    with open(os.path.join(ROOT, "playbooks", "preflight.yml"), encoding="utf-8") as f:
+        found = [t for p in yaml.safe_load(f) if "hosts" in p for t in tasks(p.get("tasks"))]
+    setups = [t["ansible.builtin.setup"] for t in found if "ansible.builtin.setup" in t]
+    assert setups == [{"gather_subset": ["min", "network", "virtual"]},
+                      {"gather_subset": ["!all", "!min", "hardware"],
+                       "filter": ["ansible_mounts", "ansible_memtotal_mb", "ansible_memfree_mb", "ansible_swaptotal_mb",
+                                  "ansible_swapfree_mb", "ansible_processor*"]}]
+    # the plays after it do not gather them all again
+    for name in ("upgrade.yml", "rolling_restart.yml", "rolling_reboot.yml", "update_java.yml", "apply_config.yml"):
+        with open(os.path.join(ROOT, "playbooks", name), encoding="utf-8") as f:
+            plays = [p for p in yaml.safe_load(f) if "hosts" in p]
+        gathering = [p for p in plays if p.get("gather_facts", True)]  # (a play's default gathers every fact)
+        assert not [p["name"] for p in gathering if set(p.get("gather_subset") or ["all"]) & {"all", "hardware"}], name

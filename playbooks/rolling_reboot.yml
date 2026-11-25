@@ -85,6 +85,7 @@
 - name: Rolling reboot
   hosts: "{{ query('community.cassandra.cassandra_nodes') }}"
   serial: 1
+  gather_facts: false  # gathered by the preflight (a play's own: every fact again, at each node's turn)
   any_errors_fatal: true
   become: true
   tasks:

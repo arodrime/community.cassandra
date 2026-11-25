@@ -100,6 +100,7 @@
 - name: Rolling restart
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_rolling_mode | default('node') == 'node' else 'localhost:!localhost' }}"
   serial: 1
+  gather_facts: false  # gathered by the preflight (a play's own: every fact again, at each node's turn)
   any_errors_fatal: true
   become: true
   tasks:
@@ -123,8 +124,7 @@
 # down is one replica down; stop_rack explains the checks).
 - name: Rolling restart, one rack at a time
   hosts: "{{ query('community.cassandra.cassandra_nodes') if cassandra_rolling_mode | default('node') == 'rack' else 'localhost:!localhost' }}"
-  gather_facts: true
-  gather_subset: [network]
+  gather_facts: false  # gathered by the preflight
   become: true
   any_errors_fatal: true
   tasks:

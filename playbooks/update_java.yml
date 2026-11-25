@@ -243,6 +243,7 @@
 - name: Move to the new Java, one node at a time
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_update_java_True'] | default([])) | list }}"
   serial: 1
+  gather_facts: false  # gathered by the preflight (a play's own: every fact again, at each node's turn)
   any_errors_fatal: true
   become: true
   tasks:
