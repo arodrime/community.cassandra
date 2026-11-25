@@ -580,7 +580,9 @@ def _identity(text, series):
 
 
 # cassandra_config's vars/ that name variables by series: not a use of them
-VARS_BY_SERIES = ("_cassandra_config_since", "_cassandra_config_old_names", "_cassandra_config_old_names_of")
+# (and the list of what the checks read, every series' names: _cassandra_config_check_vars)
+VARS_BY_SERIES = ("_cassandra_config_since", "_cassandra_config_old_names", "_cassandra_config_old_names_of",
+                  "_cassandra_config_check_vars")
 
 
 def cassandra_config_ignored_vars(names, cassandra_version):

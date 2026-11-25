@@ -329,6 +329,7 @@ def test_cassandra_config_reads_every_loader(where):
     variables = dict(cassandra_jvm_extra_options=[], cassandra_jvm8_extra_options=[], cassandra_jvm11_extra_options=[],
                      cassandra_jvm17_extra_options=[], cassandra_service_environment={}, _cassandra_config_snippet_env="",
                      cassandra_config_keep_files=[], cassandra_axonops_enabled=True, inventory_hostname="n1",
+                     _cassandra_config_checked_names="n1",
                      cassandra_config_template_overrides={})
     if where == "env":
         variables["cassandra_service_environment"] = {"JVM_EXTRA_OPTS": LOADER_LINE}

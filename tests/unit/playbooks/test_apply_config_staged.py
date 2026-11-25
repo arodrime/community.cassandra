@@ -106,7 +106,7 @@ def _staged(values):
     return render_as_given(note["ansible.builtin.set_fact"]["cassandra_apply_config_stage"], values)
 
 
-BASE = {"_todo": True, "_then": "restart", "_java": False, "_release": False, "_perms": [], "_dirs": [], "_jmx": [], "_exporter": [],
+BASE = {"_todo": True, "_then": "restart", "_java": False, "_release": False, "_perms": [], "_dirs": [], "_jmx": [], "_users": [], "_exporter": [],
         "_header": [], "_medusa": [], "_extras": [], "_hand_started": False, "_stage_files": ["cassandra.yaml"],
         "_cassandra_config_links": [], "cassandra_config_dirs": {"results": [{"stat": {"exists": True}}]}}
 
