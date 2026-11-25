@@ -1555,8 +1555,7 @@ def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
                            "      jvm17-server.options   rewritten: heap placement",
                            "      cassandra.yaml         header line added",
                            "      logback.xml            header line added",
-                           "      their diffs: reports/my_cluster/report.details.txt,",
-                           "        REWRITES OF THE NEXT APPLY_CONFIG",
+                           "      their diffs: reports/my_cluster/report.details.txt",
                            "      rewrites 1 other item with no effect"]
     said = " ".join(" ".join(line.split()) for line in lines)
     assert "expected: WOULD CHANGE: the 5 files the head lists under the next apply_config, and the rewrites under" \
@@ -1710,17 +1709,26 @@ def test_a_value_that_differs_by_case_only_differs():
     assert sorted(set(re.findall(r"(cassandra_linux_limits\.[\w.]+):", review))) == ["cassandra_linux_limits.memlock"]
 
 
-def test_a_rewrite_apply_config_proves_no_restart_for_is_not_said_without_restart():
-    # (self-review 2026-11-25) a file outside apply_config's proof of no restart (cassandra-env.sh, the JVM options
-    # files, logback.xml): never under "no restart"
-    yaml = dict(writes(("cassandra.yaml", "rewritten", "layout"))[0], proof=False)
-    checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[1:3] + [yaml]} for i in (1, 2)}
+def test_a_rewrite_with_a_restart_is_never_said_without_restart():
+    # (self-review, then audit 2026-11-25) a file apply_config restarts Cassandra for (cassandra.yaml with a key its
+    # release rejects, read at start only; a JVM file it cannot prove no restart for): never under "no restart", the
+    # restart said on its row and in the expected line, with its nodes
+    yaml = dict(writes(("cassandra.yaml", "rewritten", "bogus_key removed (Cassandra 4.1.5 rejects it)"))[0],
+                restart="a restart (Cassandra reads it at its start only)")
+    checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[1:3] + ([yaml] if i == 1 else [])}
+              for i in (1, 2)}
     lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
-    assert sync(lines)[1:4] == ["    the next apply_config:",
-                                "      cassandra.yaml         rewritten, may restart: layout",
-                                "      jvm-server.options     rewritten: heap placement"]
+    assert sync(lines)[1:5] == [
+        "    the next apply_config:",
+        "      cassandra.yaml         rewritten: bogus_key removed (Cassandra 4.1.5",
+        "                             rejects it); a restart (Cassandra reads it at its",
+        "                             start only)  on node1"]
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "WHAT HAPPENS: a restart if it cannot prove none for cassandra.yaml" in said, said
+    assert "WHAT HAPPENS: a restart of node1 (for cassandra.yaml)" in said, said
+    # the self-check found differences: no diffs of rewrites "with no effect" in the details
+    checks["node2"] = dict(checks["node2"], differences=["cassandra.yaml: x: node has 1, import would write 2"])
+    details = report([node(1), node(2)], self_check=checks, ok=False, details=True)
+    assert not [line for line in details if line.startswith("REWRITES OF THE NEXT APPLY_CONFIG")]
 
 
 def test_the_next_step_expects_the_writes_then_every_node_up_to_date():

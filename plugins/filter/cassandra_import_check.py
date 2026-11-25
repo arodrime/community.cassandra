@@ -911,7 +911,8 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                                              node_environment)
     return {"differences": differences + heap, "notes": notes,
             "writes": apply_config_writes(as_written[0], as_written[1], storage_dir, series, java,
-                                          password_line=PASSWORD_FILE_NOTE in notes)}
+                                          password_line=PASSWORD_FILE_NOTE in notes, release=release,
+                                          running=running)}
 
 
 # the files of other roles than cassandra_config the import renders (apply_config_writes leaves them out)
@@ -920,19 +921,23 @@ OTHER_ROLES_FILES = ("cassandra.service", "medusa.ini")
 HEAP_LINE = re.compile(r"^-Xm[snx]")
 
 
-def apply_config_writes(rendered, live, storage_dir="", series="", java="", password_line=False):
+def apply_config_writes(rendered, live, storage_dir="", series="", java="", password_line=False, release="",
+                        running=None):
     """What cassandra_config would write on a node whose files are live ({file: text}) from rendered ({file: the
     role's text}), the files it leaves as they are aside (the same text, or the same settings and its header line
-    there): [{file, what: rewritten | header, why: [reason], diff: [line], proof}], sorted by file. A file of the same
-    settings gets the role's header line (cassandra_config_header); one with other settings (the self-check
-    proved no effect, else they are differences) is rewritten, why: "heap placement" (an options file whose -Xms,
-    -Xmx, -Xmn lines differ), "Java N does not read it" (the options file of another Java), "layout" (any other
-    difference), and for cassandra-env.sh whose stock JMX password file line is commented out (password_line: the
-    JVM never reads it, PASSWORD_FILE_NOTE) that line back, an option of its next start; diff: its unified diff,
-    secrets masked (none for jmxremote.password); proof: apply_config proves its no restart (NO_RESTART_PROOF,
-    else it may restart for it)."""
+    there): [{file, what: rewritten | header, why: [reason], diff: [line], restart}], sorted by file.
+    A file of the same settings gets the role's header line (cassandra_config_header). One with other settings (the
+    self-check found no difference, else it is one) is rewritten, why: "heap placement" (an options file whose -Xms,
+    -Xmx, -Xmn lines differ), "Java N does not read it" (the options file of another Java), the keys of cassandra.yaml
+    its Cassandra (release) rejects removed (the import leaves them out), "layout" (any other difference); and for
+    cassandra-env.sh whose stock JMX password file line is commented out (password_line: the JVM never reads it,
+    PASSWORD_FILE_NOTE) that line back, an option of its next start. diff: its unified diff, secrets masked (none for
+    jmxremote.password). restart: why apply_config restarts the running Cassandra (running: {cmdline, newer}) for
+    it, "" when it does not: it proves no restart for NO_RESTART_PROOF's files only, and only with the node's Java
+    known and the files as Cassandra started with them (else it restarts, as for any change)."""
     out = []
     reads = jvm.options_file(series, java)
+    running = running or {}
     for name in sorted(f for f in rendered if f in live and f not in OTHER_ROLES_FILES):
         node, role = live[name], rendered[name]
         if node == role:
@@ -945,10 +950,11 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
             header = same and bool(cassandra_config_header(node, role, name, storage_dir))
         if same:
             if header:
-                out.append({"file": name, "what": "header", "why": [], "diff": []})
+                out.append({"file": name, "what": "header", "why": [], "diff": [], "restart": ""})
             continue
         why = []
         other = re.match(r"^jvm(\d+)-server\.options$", name)
+        rejected = _rejected(node, role, release) if name == "cassandra.yaml" and release else []
         if other and reads and name != reads:
             why.append("Java %s does not read it" % jvm.java_major(java))
         elif name.endswith(".options"):
@@ -956,6 +962,9 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
             rest = [[w for w in jvm.words(t.split("\n")) if not HEAP_LINE.match(w)] for t in (node, role)]
             why += ["heap placement"] if heap[0] != heap[1] else []
             why += ["layout"] if rest[0] != rest[1] or not why else []
+        elif rejected:
+            why.append("%s removed (Cassandra %s rejects %s)" % (", ".join(rejected), release,
+                                                                 "it" if len(rejected) == 1 else "them"))
         else:
             why.append("layout")
         if name == "cassandra-env.sh" and password_line:
@@ -964,8 +973,24 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
             mask(node).split("\n"), mask(role).split("\n"), "%s (the node's)" % name, "%s (the role's)" % name,
             lineterm=""))
         out.append({"file": name, "what": "rewritten", "why": why, "diff": diff,
-                    "proof": bool(NO_RESTART_PROOF.match(name))})
+                    "restart": _writes_restart(name, live, java, running)})
     return out
+
+
+def _writes_restart(name, live, java, running):
+    """Why apply_config restarts the running Cassandra for rewriting the file name, "" when it does not (see
+    apply_config_writes)."""
+    if not running.get("cmdline"):  # (not running: started or left stopped, no restart)
+        return ""
+    if name in ("cassandra.yaml", "cassandra-rackdc.properties"):  # (read at start only: no proof tried)
+        return "a restart (Cassandra reads it at its start only)"
+    if not NO_RESTART_PROOF.match(name):
+        return "a restart possible (no proof of none)"
+    if not java:
+        return "a restart (the node's Java not known: no proof of none)"
+    if set(running.get("newer") or []) & set(live):
+        return "a restart (files changed since Cassandra started: no proof of none)"
+    return ""
 
 
 # the files apply_config's own proof of no restart covers (cassandra_apply_config_no_effect)

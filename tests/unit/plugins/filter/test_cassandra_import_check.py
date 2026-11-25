@@ -2071,3 +2071,24 @@ def test_a_named_option_elsewhere_is_not_the_same_when_bash_may_add_another(wher
     line = 'if [ -n "$CASSANDRA_CONF" ]; then\n%s\nfi' % ELSEWHERE_LINE if where == "in a block" else ELSEWHERE_LINE
     files["cassandra-env.sh"] += "\n" + line + "\n"
     assert check(files, "50x", env=env)["differences"] != []
+
+
+def test_the_writes_say_the_real_reason_and_the_restart():
+    # (audit 2026-11-25) cassandra.yaml with a key its release rejects (left out by the import): rewritten without it,
+    # said so, and with the restart apply_config makes for it (no proof tried for cassandra.yaml); a JVM file
+    # changed since Cassandra started: apply_config cannot prove no restart, so neither "no restart" here
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import apply_config_writes
+    role = {"cassandra.yaml": "cluster_name: x\nnum_tokens: 16\n"}
+    node = {"cassandra.yaml": "cluster_name: x\nnum_tokens: 16\nbogus_key_never: 3\n"}
+    out = _compare_files(role, node, release="4.1.5", series="41x", running={"cmdline": "java\0-Xss256k"})
+    assert out["differences"] == []
+    assert [(w["file"], w["why"], w["restart"]) for w in out["writes"]] == [
+        ("cassandra.yaml", ["bogus_key_never removed (Cassandra 4.1.5 rejects it)"],
+         "a restart (Cassandra reads it at its start only)")]
+    env = {"cassandra-env.sh": "# a comment\nJVM_OPTS=-Xss256k\n"}
+    running = {"cmdline": "java\0-Xss256k", "newer": ["cassandra-env.sh"]}
+    written = apply_config_writes({"cassandra-env.sh": "JVM_OPTS=-Xss256k\nX=1\n"}, env, series="50x", java="17",
+                                  running=running)
+    assert [w["restart"] for w in written] == ["a restart (files changed since Cassandra started: no proof of none)"]
+    assert [w["restart"] for w in apply_config_writes({"cassandra-env.sh": "JVM_OPTS=-Xss256k\nX=1\n"}, env,
+                                                      series="50x", java="17", running={})] == [""]
