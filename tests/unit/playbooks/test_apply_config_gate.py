@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_gate import (
-    PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops)
+    PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops, cassandra_check_groups)
 from ansible_collections.community.cassandra.tests.unit.helpers import TOP, render
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 
@@ -350,3 +350,87 @@ def test_the_parts_left_out_are_said_in_the_plan():
     assert note["vars"]["_cassandra_notes_in_plan"] is True
     assert render(note["vars"]["_note"], _cassandra_apply_parts=cassandra_apply_only("config")) == (
         "WARNING  not checked (apply_only): java, linux, install, repository, medusa, firewall, axonops")
+
+
+# --- the checks once for the nodes that share their values (plan.yml, _cassandra_config_checks_once) -----------
+
+# names checks.yml looks up by name (lookup('ansible.builtin.vars', ...), query varnames): written out here
+CHECKS_BY_NAME = sorted(["cassandra_env_extra_lines", "cassandra_logback_extra_lines"] + [
+    prefix + name for prefix in ("cassandra_jvm_", "cassandra_jvm8_", "cassandra_jvm11_", "cassandra_jvm17_")
+    for name in ("max_tenuring_threshold", "g1_heap_region_size", "g1_new_size_percent",
+                 "g1_rset_updating_pause_time_percent", "max_gc_pause_millis", "initiating_heap_occupancy_percent",
+                 "removed_options", "extra_options")])
+
+
+# words of its messages, not variables it reads (cassandra_jvm, the running JVM's fact, would tell every node apart)
+NOT_READ = {"cassandra_config": "the role's name", "cassandra_jvm": "cassandra_jvm<N>_gc",
+            # the nodes the checks run for: the group itself, named in its messages
+            "_cassandra_config_checked": "", "_cassandra_config_checked_names": ""}
+
+
+def checks_read():
+    """The variables checks.yml reads: the names it writes (comments left out), those it looks up by name, and the
+    role variables they read, recursively (the filters it calls left out)."""
+    role = os.path.join(TOP, "roles", "cassandra_config")
+    defs = {}
+    for part in ("defaults", "vars"):
+        with open(os.path.join(role, part, "main.yml"), encoding="utf-8") as f:
+            for name, value in (yaml.safe_load(f) or {}).items():
+                defs[name] = value if isinstance(value, str) else yaml.safe_dump(value)
+    filters = set()
+    for path in glob.glob(os.path.join(TOP, "plugins", "filter", "*.py")):
+        with open(path, encoding="utf-8") as f:
+            filters |= set(re.findall(r'"(cassandra_\w+)":', f.read()))
+
+    def words(text):
+        text = re.sub(r"(?m)^\s*#.*$", "", text)
+        return set(re.findall(r"\b_?cassandra_[a-z0-9_]*[a-z0-9]\b", text)) - filters
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        todo = words(f.read()) | set(CHECKS_BY_NAME)
+    seen = set()
+    while todo:
+        name = todo.pop()
+        if name not in seen:
+            seen.add(name)
+            todo |= words(defs.get(name, "")) - seen
+    return seen - {"_cassandra_config_check_vars"} - set(NOT_READ)
+
+
+def test_the_checks_values_are_all_read():
+    with open(os.path.join(TOP, "roles", "cassandra_config", "vars", "main.yml"), encoding="utf-8") as f:
+        listed = yaml.safe_load(f)["_cassandra_config_check_vars"]
+    assert listed == sorted(listed)
+    assert sorted(checks_read() - set(CHECKS_BY_NAME)) == listed  # (those looked up by name: plan.yml adds them)
+    key = find_task(PLAN, "Note the values the checks read")
+    by_name = key["vars"]["_by_name"]
+    assert "query('ansible.builtin.varnames', '^cassandra_(env|logback)_extra_lines$')" in by_name
+    jvm = ["%s%s" % (p, n) for p in re.findall(r"'(cassandra_jvm[0-9]*_)'", by_name) for n in key["vars"]["_names"]]
+    assert sorted(jvm + ["cassandra_env_extra_lines", "cassandra_logback_extra_lines"]) == CHECKS_BY_NAME
+    # its lookups by name: only the names written out above
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        text = f.read()
+    looked = re.findall(r"lookup\('ansible\.builtin\.vars', ([^,)]+)", text)
+    assert sorted(set(looked)) == ["_read_file | community.cassandra.cassandra_jvm_options_variable", "prefix ~ name",
+                                   "var"], looked
+    assert re.findall(r"query\('ansible\.builtin\.varnames', '([^']+)'", text) == ["^cassandra_(env|logback)_extra_lines$"]
+
+
+def test_the_checks_run_once_for_the_nodes_that_share_their_values():
+    group = find_task(PLAN, "Group the nodes whose checks read the same values")
+    hostvars = {"n1": {"_cassandra_config_check_key": "a"}, "n2": {"_cassandra_config_check_key": "b"},
+                "n3": {"_cassandra_config_check_key": "a"}, "n4": {}}  # (n4: no key, a group of its own)
+    groups = cassandra_check_groups(list(hostvars), hostvars)
+    assert groups == {"n1": ["n1", "n3"], "n2": ["n2"], "n4": ["n4"]}
+    assert group["run_once"] is True and "cassandra_check_groups(hostvars)" in str(group["ansible.builtin.set_fact"])
+    checks = find_task(PLAN, "Check the variables of these nodes")
+    assert checks["when"] == "inventory_hostname in _cassandra_config_check_groups"
+    # per node elsewhere (a play whose nodes do not all run the plan), once in apply_config's compare
+    assert find_task(PLAN, "Check the variables")["when"] == "not _cassandra_config_checks_once | default(false) | bool"
+    assert COMPARE["vars"]["_cassandra_config_checks_once"] is True
+    # the messages name the nodes checked
+    with open(os.path.join(TOP, "roles", "cassandra_config", "vars", "main.yml"), encoding="utf-8") as f:
+        names = yaml.safe_load(f)["_cassandra_config_checked_names"]
+    assert render(names, inventory_hostname="n2") == "n2"
+    assert render(names, inventory_hostname="n1", _cassandra_config_checked=["n1", "n3"]) == "n1, n3"
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        assert "inventory_hostname" not in f.read()

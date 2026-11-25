@@ -1,6 +1,8 @@
 ---
 # The variables checked before anything is read on the node: a value Cassandra would
-# refuse to start with stops the run here.
+# refuse to start with stops the run here. Run for one node, or once for the nodes whose values they read are the
+# same (_cassandra_config_checked: their names, plan.yml): they read the variables only, so the verdicts are theirs
+# too, said with their names.
 - name: Assert required cassandra_config variables are set
   ansible.builtin.assert:
     that:
@@ -130,7 +132,7 @@
 - name: Warn about audit events going to system.log
   ansible.builtin.debug:
     msg: >-
-      WARNING  {{ inventory_hostname }}: Cassandra audits with FileAuditLogger, and cassandra_log_audit_file is false:
+      WARNING  {{ _cassandra_config_checked_names }}: Cassandra audits with FileAuditLogger, and cassandra_log_audit_file is false:
       the audit events go to system.log, not audit/audit.log. Set cassandra_log_audit_file to true for a file of their
       own, or leave it so if wanted.
   vars:
@@ -383,7 +385,7 @@
 - name: Warn about a young generation size G1 ignores
   ansible.builtin.debug:
     msg: >-
-      WARNING  {{ inventory_hostname }}: cassandra_heap_newsize is {{ cassandra_heap_newsize }}, written as HEAP_NEWSIZE
+      WARNING  {{ _cassandra_config_checked_names }}: cassandra_heap_newsize is {{ cassandra_heap_newsize }}, written as HEAP_NEWSIZE
       in cassandra-env.sh, which 5.0 with G1 ignores (it logs "HEAP_NEWSIZE has erroneously been set" at each start).
       Remove cassandra_heap_newsize from the inventory unless the node runs it so on purpose.
   vars:
@@ -434,7 +436,7 @@
 # JVM_EXTRA_OPTS), and a cassandra-env.sh kept by hand would not get the line
 - name: Refuse a second AxonOps Java agent loader
   ansible.builtin.fail:
-    msg: "{{ ('cassandra_config  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+    msg: "{{ ('cassandra_config  ' ~ _cassandra_config_checked_names) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
   when:
     - cassandra_axonops_enabled | default(false) | bool
     - _wrong | length > 0

@@ -3,7 +3,42 @@
 # (apply_plan.yml says, confirms and writes what it lists). The only code that decides what the role changes:
 # apply_config's compare runs it on every node.
 - name: Check the variables
-  ansible.builtin.import_tasks: checks.yml
+  ansible.builtin.include_tasks: checks.yml
+  when: not _cassandra_config_checks_once | default(false) | bool
+
+# _cassandra_config_checks_once (apply_config's compare, every node of the play running this): the checks once for
+# the nodes whose values they read are the same (_cassandra_config_check_vars), on the first of them
+- name: Check the variables once for the nodes that share them
+  when: _cassandra_config_checks_once | default(false) | bool
+  block:
+    - name: Note the values the checks read
+      ansible.builtin.set_fact:
+        _cassandra_config_check_key: >-
+          {{ query('ansible.builtin.vars', *(_cassandra_config_check_vars + _by_name), default='(not set)') | to_json
+             | hash('sha1') }}
+      no_log: true  # (a sha1, but of values that hold secrets)
+      vars:
+        # the ones checks.yml looks up by name
+        _by_name: >-
+          {%- set out = query('ansible.builtin.varnames', '^cassandra_(env|logback)_extra_lines$') -%}
+          {%- for prefix in ['cassandra_jvm_', 'cassandra_jvm8_', 'cassandra_jvm11_', 'cassandra_jvm17_'] -%}
+          {%-   for name in _names -%}{%- set _ = out.append(prefix ~ name) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        _names: [max_tenuring_threshold, g1_heap_region_size, g1_new_size_percent, g1_rset_updating_pause_time_percent,
+                 max_gc_pause_millis, initiating_heap_occupancy_percent, removed_options, extra_options]
+
+    - name: Group the nodes whose checks read the same values
+      ansible.builtin.set_fact:
+        _cassandra_config_check_groups: >-
+          {{ ansible_play_hosts | community.cassandra.cassandra_check_groups(hostvars) }}
+      run_once: true
+
+    - name: Check the variables of these nodes
+      ansible.builtin.include_tasks: checks.yml
+      when: inventory_hostname in _cassandra_config_check_groups
+      vars:
+        _cassandra_config_checked: "{{ _cassandra_config_check_groups[inventory_hostname] }}"
 
 - name: Check that the Cassandra package's config is there
   ansible.builtin.stat:

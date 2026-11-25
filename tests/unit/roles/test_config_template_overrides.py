@@ -74,9 +74,21 @@ def test_refuses_a_value_that_is_not_a_dict():
     assert refused(["cassandra-env.sh"]) == ["a dict of {file name: template path} is expected"]
 
 
+def walk_block(task):
+    for t in task.get("block") or []:
+        yield t
+        yield from walk_block(t)
+
+
 def test_runs_before_anything_is_read_or_changed():
-    names = [t.get("name") for t in load_tasks(os.path.join(ROLE, "tasks", "main.yml"))]
-    assert names.index("Refuse template overrides the role cannot use") < names.index("Work out the changes")
+    tasks = load_tasks(os.path.join(ROLE, "tasks", "main.yml"))
+    names = [t.get("name") for t in tasks]
+    # (checks.yml: per node, or once for the nodes that share its values: both before anything is read)
+    for checks in (tasks[names.index("Check the variables")],
+                   find_task(tasks, "Check the variables once for the nodes that share them")):
+        assert "Refuse template overrides the role cannot use" in [t.get("name") for t in walk_block(checks)]
+    assert names.index("Check the variables") < names.index("Check the variables once for the nodes that share them") \
+        < names.index("Work out the changes")
     assert "when" not in REFUSE  # always, under --check too
 
 

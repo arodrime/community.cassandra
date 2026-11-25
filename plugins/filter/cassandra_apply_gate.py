@@ -6,6 +6,7 @@ cassandra_apply_only: -e apply_only -> the parts the run compares and applies, t
 refuses them.
 cassandra_apply_only_stops: what a run restricted to some parts cannot leave out on its nodes (a newer release of
 the series, the AxonOps agent cassandra-env.sh loads).
+cassandra_check_groups: the nodes whose cassandra_config checks read the same values, checked once.
 cassandra_apply_gate_lines: the lines the report of the run says of the compare: the nodes whose config the
 cassandra_config plan found unchanged (the rest of the role not run there), the parts left out.
 """
@@ -96,10 +97,22 @@ def cassandra_apply_gate_lines(gates, left_out=None, full=False, verify=False):
     return lines
 
 
+def cassandra_check_groups(names, hostvars):
+    """names: the nodes of the play; hostvars: their variables (_cassandra_config_check_key: the sha1 of the values
+    cassandra_config's checks read) -> {first node: [the nodes with its key]}, in the order of names; a node without
+    a key in a group of its own."""
+    first, groups = {}, {}
+    for name in names:
+        key = hostvars[name].get("_cassandra_config_check_key") or "(none) " + name
+        groups.setdefault(first.setdefault(key, name), []).append(name)
+    return groups
+
+
 class FilterModule(object):
     def filters(self):
         return {
             "cassandra_apply_only": cassandra_apply_only,
             "cassandra_apply_only_stops": cassandra_apply_only_stops,
             "cassandra_apply_gate_lines": cassandra_apply_gate_lines,
+            "cassandra_check_groups": cassandra_check_groups,
         }
