@@ -112,12 +112,17 @@ def test_the_guard_says_why_and_the_way_out():
 
 
 def test_where_it_runs():
-    # cassandra_config: after the compare (its identity check first), before the question and any write
-    block = next(t for t in _load("roles/cassandra_config/tasks/main.yml") if t.get("name") == "Configure")["block"]
+    # cassandra_config: in its plan, after the compare (its identity check first); the question and any write after
+    # it, in the rest (main.yml: the plan, then the rest)
+    main = [t["ansible.builtin.import_tasks"] for t in _load("roles/cassandra_config/tasks/main.yml")]
+    assert main == ["plan.yml", "apply_plan.yml"]
+    block = next(t for t in _load("roles/cassandra_config/tasks/plan.yml") if t.get("name") == "Work out the changes")["block"]
     names = [t["name"] for t in block]
     assert names.index("Compare the new files with the live ones") < names.index(
-        "Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it") < names.index(
-        "Show the changes and confirm them") < names.index("Write the files and directories")
+        "Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it")
+    rest = next(t for t in _load("roles/cassandra_config/tasks/apply_plan.yml") if t.get("name") == "Write the changes")["block"]
+    names_rest = [t["name"] for t in rest]
+    assert names_rest.index("Show the changes and confirm them") < names_rest.index("Write the files and directories")
     guard = block[names.index("Refuse a storage_compatibility_mode before the one Cassandra runs, or two steps after it")]
     assert guard["ansible.builtin.include_role"]["tasks_from"] == "storage_mode_guard.yml"
     assert guard["vars"]["_cassandra_storage_mode_written"] is True

@@ -183,7 +183,7 @@ def test_no_second_question_whatever_e_cassandra_config_confirm_says():
     assert "_cassandra_config_no_question" not in open(os.path.join(TOP, "playbooks", "add_datacenter.yml")).read()
     # the previews (apply: check_mode, under which ansible_check_mode stays false and the pause would run)
     for playbook in ("apply_config.yml", "change_seeds.yml", "upgrade.yml"):
-        previews = [t for p in load("playbooks", playbook) for t in p.get("tasks", []) or []
+        previews = [t for p in load("playbooks", playbook) for t in includes(p.get("tasks", []))
                     if (t.get("ansible.builtin.include_role") or {}).get("name") == "community.cassandra.cassandra_config"
                     and (t["ansible.builtin.include_role"].get("apply") or {}).get("check_mode") is True]
         assert previews and all(t["vars"]["_cassandra_config_no_question"] is True for t in previews), playbook
@@ -236,11 +236,17 @@ def test_create_cluster_marks_the_nodes_it_emptied_new():
     assert render(role[0]["vars"]["_cassandra_config_new_node"], _cassandra_create_cluster_emptied=True) is True
 
 
-def includes(tasks):
+def includes(tasks, given=None):
+    """The tasks, those of blocks too, each with the vars of its blocks under its own (as Ansible gives them)."""
     for t in tasks or []:
-        yield t
+        variables = dict(given or {}, **t.get("vars") or {})
+        yield dict(t, vars=variables)
         for key in ("block", "rescue", "always"):
-            yield from includes(t.get(key))
+            yield from includes(t.get(key), variables)
+
+
+# the whole role: main.yml, or its plan and the rest (apply_config's compare includes them one after the other)
+WHOLE = (None, "plan.yml", "apply_plan.yml")
 
 
 def test_every_operation_that_asked_writes_the_config_without_a_second_question():
@@ -256,7 +262,7 @@ def test_every_operation_that_asked_writes_the_config_without_a_second_question(
                 if top == "playbooks" else plays
             for t in includes(tasks):
                 inc = t.get("ansible.builtin.include_role") or {}
-                if inc.get("name") == "community.cassandra.cassandra_config" and "tasks_from" not in inc:
+                if inc.get("name") == "community.cassandra.cassandra_config" and inc.get("tasks_from") in WHOLE:
                     found.append((name, "cassandra_config_confirm" in t.get("vars", {})))
     assert ("action_add_prepare.yml", True) in found and ("apply_config.yml", True) in found
     assert [f for f in found if not f[1]] == []

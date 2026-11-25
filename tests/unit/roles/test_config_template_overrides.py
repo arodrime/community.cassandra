@@ -76,7 +76,7 @@ def test_refuses_a_value_that_is_not_a_dict():
 
 def test_runs_before_anything_is_read_or_changed():
     names = [t.get("name") for t in load_tasks(os.path.join(ROLE, "tasks", "main.yml"))]
-    assert names.index("Refuse template overrides the role cannot use") < names.index("Configure")
+    assert names.index("Refuse template overrides the role cannot use") < names.index("Work out the changes")
     assert "when" not in REFUSE  # always, under --check too
 
 

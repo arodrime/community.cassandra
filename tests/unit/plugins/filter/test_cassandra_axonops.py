@@ -347,7 +347,7 @@ def test_cassandra_config_reads_every_loader(where):
 
 
 def test_cassandra_config_refuses_a_missing_options_file():
-    tasks = _tasks("roles", "cassandra_config", "tasks", "main.yml")
+    tasks = _tasks("roles", "cassandra_config", "tasks", "apply_plan.yml")
     look = _find(tasks, "Look for the AxonOps Java agent's options file")
     refuse = _find(tasks, "Refuse to load an AxonOps Java agent not installed")
     # a command: skipped under check mode (apply_config's compare: the agent comes later)
@@ -720,7 +720,7 @@ def test_cassandra_config_does_nothing_of_axonops_when_off(enabled):
     # the agent off (false, an INI "false", undefined): neither the look for the options file nor the loader refusal
     from ansible_collections.community.cassandra.tests.unit.helpers import task_runs
     variables = {} if enabled is None else {"cassandra_axonops_enabled": enabled}
-    look = _find(_tasks("roles", "cassandra_config", "tasks", "main.yml"), "Look for the AxonOps Java agent's options file")
+    look = _find(_tasks("roles", "cassandra_config", "tasks", "apply_plan.yml"), "Look for the AxonOps Java agent's options file")
     refuse = _find(_tasks("roles", "cassandra_config", "tasks", "checks.yml"), "Refuse a second AxonOps Java agent loader")
     assert not task_runs(look, **variables)
     assert not task_runs(refuse, **dict(variables, _wrong=["x"]))

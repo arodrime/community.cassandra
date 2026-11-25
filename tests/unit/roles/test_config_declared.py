@@ -278,8 +278,8 @@ def test_several_variables_in_one_message():
 
 
 def test_the_check_runs_with_the_installed_release_and_before_install():
-    # read.yml (Cassandra installed: its release read), and main.yml when nothing is installed yet (--check)
-    imports = [t for t in load(*"roles cassandra_config tasks main.yml".split()) if "since.yml" in str(t)]
+    # read.yml (Cassandra installed: its release read), and plan.yml when nothing is installed yet (--check)
+    imports = [t for t in load(*"roles cassandra_config tasks plan.yml".split()) if "since.yml" in str(t)]
     assert imports and imports[0]["when"] == "not cassandra_config_pkg_conf.stat.exists"
     assert [t for t in load(*"roles cassandra_config tasks read.yml".split()) if "since.yml" in str(t)]
     # an operator message (the ops callback prints it as is: it names the host, said once)

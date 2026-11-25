@@ -60,6 +60,7 @@ RC1_NAMES_NOW_IN_PYTHON = frozenset((
 NOT_VARIABLES = frozenset((
     # the filters added since rc1 that the playbooks call (a new one goes here too: a test says so)
     "cassandra_apply_config_axonops_steps", "cassandra_apply_config_down_ok_all", "cassandra_apply_config_view",
+    "cassandra_apply_gate_lines", "cassandra_apply_only", "cassandra_apply_only_stops",
     "cassandra_axonops_changes", "cassandra_axonops_config",
     "cassandra_axonops_enabled_hosts", "cassandra_axonops_files", "cassandra_axonops_java_agent",
     "cassandra_axonops_loader_refusals", "cassandra_axonops_read_problems", "cassandra_axonops_repository_items",

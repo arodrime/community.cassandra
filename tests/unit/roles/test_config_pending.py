@@ -213,7 +213,7 @@ def test_service_seeds_before_changing_the_unit():
 def test_config_seeds_before_writing():
     # cassandra_config records what the JVM started with before its first change of a node started another way
     main = load_tasks(os.path.join(ROLE, "..", "cassandra_config", "tasks", "main.yml"))
-    block = find_task(main, "Configure")["block"]
+    block = find_task(main, "Write the changes")["block"]
     names = [t["name"] for t in block]
     seed = names.index("Record the config the running Cassandra started with")
     assert seed < names.index("Template Cassandra config files")

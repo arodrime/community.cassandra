@@ -75,7 +75,8 @@ def test_compared_in_check_mode_with_the_config():
     # a node failing there would be left out of the plan
     assert FIND["any_errors_fatal"] is True
     assert TASKS.index("Compare the config") < TASKS.index("Compare the OS settings") < TASKS.index("Note what this node needs")
-    assert "when" not in compare  # cassandra_linux_manage false: the role itself leaves the node alone
+    # cassandra_linux_manage false: the role itself leaves the node alone; apply_only without linux: not compared
+    assert compare["when"] == "'linux' in _cassandra_apply_parts.parts"
 
 
 def test_the_role_leaves_a_node_kept_as_it_is_with_nothing_to_apply():

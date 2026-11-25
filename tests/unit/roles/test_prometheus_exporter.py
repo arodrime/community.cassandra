@@ -370,7 +370,7 @@ def test_what_changes_is_noted_for_the_report_and_apply_config():
 # --- the cleanup ------------------------------------------------------------
 
 CLEANUP = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_cleanup.yml"))
-FIND = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_find.yml"))
+UNUSED = load_tasks(os.path.join(ROLE, "tasks", "prometheus_exporter_find.yml"))
 
 
 def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prometheus_javaagent-1.7.0.jar"),
@@ -404,7 +404,7 @@ def unused(tmp_path, on, listed=("jmx_prometheus_javaagent-1.6.0.jar", "jmx_prom
     (bin_dir / "getent").write_text("#!/bin/sh\n[ \"$2\" = cassandra ] && echo 'cassandra:x:1:1::/home/cassandra:/bin/sh'\n")
     for tool in ("systemctl", "getent"):
         (bin_dir / tool).chmod(0o755)
-    argv = find(FIND, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
+    argv = find(UNUSED, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
     run = subprocess.run(argv[:4] + [str(jars), "jmx_prometheus_javaagent-1.7.0.jar", str(conf), on, files, to_write,
                                      if_missing, "cassandra", include, str(root)],
                          stdout=subprocess.PIPE, check=True,
@@ -515,7 +515,7 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
     for name in ["exporter/.cassandra_config", "exporter/jmx_prometheus_javaagent-1.6.0.jar",
                  "exporter/jmx_prometheus_javaagent-1.7.0.jar", "conf/jmx_prometheus.yml", "conf/jmx_prometheus.at_start"]:
         (case / name).unlink()
-    argv = find(FIND, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
+    argv = find(UNUSED, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
     run = subprocess.run(argv[:4] + [str(case / "exporter"), "jmx_prometheus_javaagent-1.7.0.jar", str(case / "conf"),
                                      "off", "cassandra-env.sh", "", "", "cassandra", "", str(case / "root")],
                          stdout=subprocess.PIPE, check=True)
@@ -525,8 +525,8 @@ def test_off_nothing_removed_while_the_next_start_may_still_load_it(tmp_path):
         "kept|cassandra_service_environment|role-unit", "kept|jvm17-server.options|conf"]
     assert unused(tmp_path / "m", "off", if_missing="jvm-server.options cassandra-env.sh",
                   env="-Dx=1\n") == ["kept|jvm-server.options|conf"]
-    argv = find(FIND, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
-    task_vars = find(FIND, "Find what the exporter's agent no longer needs")["vars"]
+    argv = find(UNUSED, "Find what the exporter's agent no longer needs")["ansible.builtin.command"]["argv"]
+    task_vars = find(UNUSED, "Find what the exporter's agent no longer needs")["vars"]
 
     def args(**variables):
         variables = role_vars(**variables)

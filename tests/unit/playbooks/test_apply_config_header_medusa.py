@@ -103,7 +103,8 @@ def test_medusa_is_compared_in_check_mode_on_its_nodes_only():
     compare = find(FIND["tasks"], "Compare Medusa")
     role = compare["ansible.builtin.include_role"]
     assert role["name"] == "community.cassandra.cassandra_medusa" and role["apply"] == {"check_mode": True}
-    assert compare["when"] == "cassandra_medusa_enabled | default(false) | bool"
+    assert compare["when"] == ["cassandra_medusa_enabled | default(false) | bool",
+                               "'medusa' in _cassandra_apply_parts.parts"]  # (apply_only)
     assert compare["vars"]["_cassandra_medusa_compare"] is True and compare["vars"]["cassandra_change_report_dir"] == ""
     names = [t.get("name") for t in FIND["tasks"]]
     assert names.index("Compare Medusa") < names.index("Note what this node needs")
