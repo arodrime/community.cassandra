@@ -15,8 +15,8 @@ import yaml
 from ansible.plugins.loader import init_plugin_loader
 
 from ansible_collections.community.cassandra.tests.unit.task_files import load_tasks
-from ansible_collections.community.cassandra.tests.unit.helpers import (render_as_given, templar_for, trust_as_template, trusted,
-                                                                      with_apply_config_view)
+from ansible_collections.community.cassandra.tests.unit.helpers import (
+    render_as_given, templar_for, trust_as_template, trusted, with_apply_config_view)
 
 with warnings.catch_warnings():  # already done under ansible-test
     warnings.simplefilter("ignore")
