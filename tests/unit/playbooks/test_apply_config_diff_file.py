@@ -54,3 +54,32 @@ def test_a_diff_file_not_written_is_said(tmp_path):
     # (audit rounds 2 and 3) the view names no file that is not there: the one rendered naming none
     assert 'VIEW [\\"WILL CHANGE\\", \\"  jvm-server.options  rewritten\\", \\"      (24 more lines not shown)\\"]' \
         in output, output
+
+
+@pytest.mark.playbook
+def test_a_diff_file_not_written_gives_every_node_the_view_naming_none(tmp_path):
+    # (audit round 5) the run is run_once on the play's nodes: the view naming no file reaches each of them (the
+    # recap and the report read it from any)
+    (tmp_path / "reports").write_text("a file, not a dir\n")
+    path = tmp_path / "reports" / "prod" / "apply_config-2026-11-25-120000.diff"
+    playbook = tmp_path / "play.yml"
+    playbook.write_text(yaml.safe_dump([{
+        "hosts": "all", "gather_facts": False,
+        "vars": {"cassandra_apply_config_diff_text": "== x\n-a\n+b", "cassandra_apply_config_diff_path": str(path),
+                 "cassandra_apply_config_diff": ["WILL CHANGE", "real diffs: " + str(path)],
+                 "_cassandra_apply_config_diff_unnamed": ["WILL CHANGE", "      (1 more line not shown)"]},
+        "tasks": [WRITE, {"name": "Show the view", "ansible.builtin.debug": {
+            "msg": "VIEW {{ inventory_hostname }} {{ cassandra_apply_config_diff | join('|') }}"}}]}]))
+    args = ["-c", "local", "-i", "node1,node2,node3,", "-e", "ansible_python_interpreter=" + sys.executable, playbook]
+    rc, output = run_playbook(args, dict(ANSIBLE_LOCALHOST_WARNING="0"), cwd=tmp_path)
+    assert rc == 0, output
+    for name in ("node1", "node2", "node3"):
+        assert "VIEW %s WILL CHANGE|      (1 more line not shown)" % name in output, output
+
+
+def test_a_real_run_writes_the_diff_file_once_confirmed():
+    # (audit round 5) a run declined writes no .diff (its head says "what the run writes"); --check writes it, as
+    # what a real run would write
+    names = [t.get("name") for t in FIND["tasks"]]
+    assert names.index("Show the plan and confirm the run") < names.index("Write the files' diffs next to the report"
+                                                                          " of the run")
