@@ -4,6 +4,8 @@
 
 cassandra_import_host_vars: hostvars, host names -> what the import read on
     each host (its facts, its import_cluster_* variables), read once.
+cassandra_import_newer_files: the config files written since the running Cassandra started, as apply_config takes
+    them (its record of that start when there is one, else their times).
 cassandra_import_nodes: the ring (cassandra_ring_nodes), that and the given
     nodes -> one entry per ring node for cassandra_inventory_layout: the host
     read at its address, its name, what of its install, Java, unit... the
@@ -17,6 +19,10 @@ large cluster took hours).
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import base64
+import hashlib
+import json
+import os
 import re
 
 from ansible.errors import AnsibleFilterError
@@ -526,9 +532,44 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
     return out
 
 
+def cassandra_import_newer_files(conf_files, jvm, record="", slurped=None):
+    """The config files written since the running Cassandra started, as apply_config takes them (config_pending.yml:
+    the ones it would see as a change pending, or as not known): with apply_config's record of that start (record:
+    its text in base64, the record of that JVM: the same pid, the same start), the files whose sha1 is neither the
+    one recorded nor the one of the role's rendering of the same settings (the contents read: slurped, slurp's
+    results; a file not read: by its time); else the files changed since it started (ctime) -> sorted [name].
+    conf_files: find's result of the conf dir; jvm: cassandra_jvm ({pid, start})."""
+    files = (conf_files or {}).get("files") or []
+    start = float((jvm or {}).get("start") or 0)
+    newer = sorted(os.path.basename(f["path"]) for f in files if float(f.get("ctime") or 0) > start)
+    try:
+        record = json.loads(base64.b64decode(record).decode("utf-8")) if record else {}
+    except (ValueError, TypeError):
+        record = {}
+    started = record.get("_jvm") or {} if isinstance(record, dict) else {}
+    if not started or str(started.get("pid", "")) != str((jvm or {}).get("pid", "-")) \
+            or abs(float(started.get("start") or 0) - start) >= 2:
+        return newer
+    recorded = dict((os.path.basename(k), v) for k, v in record.items() if k.startswith("/"))
+    same = dict((os.path.basename(k), v) for k, v in (record.get("_same_settings") or {}).items())
+    contents = dict((r["item"], base64.b64decode(r["content"])) for r in slurped or [] if "content" in r)
+    out = []
+    for f in files:
+        name = os.path.basename(f["path"])
+        if name not in contents:
+            changed = name in newer  # (not read: as its time says)
+        else:
+            sha1 = hashlib.sha1(contents[name]).hexdigest()
+            changed = recorded.get(name) != sha1 and same.get(name) != sha1
+        if changed:
+            out.append(name)
+    return sorted(out)
+
+
 class FilterModule(object):
     def filters(self):
         return {
+            "cassandra_import_newer_files": cassandra_import_newer_files,
             "cassandra_import_host_vars": cassandra_import_host_vars,
             "cassandra_import_kept_last_notes": cassandra_import_kept_last_notes,
             "cassandra_import_nodes": cassandra_import_nodes,

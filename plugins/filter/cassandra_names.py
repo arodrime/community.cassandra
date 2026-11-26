@@ -64,6 +64,7 @@ NOT_VARIABLES = frozenset((
     "cassandra_axonops_enabled_hosts", "cassandra_axonops_files", "cassandra_axonops_java_agent",
     "cassandra_axonops_loader_refusals", "cassandra_axonops_read_problems", "cassandra_axonops_repository_items",
     "cassandra_apply_config_changes", "cassandra_apply_config_diff_text", "cassandra_apply_config_happens",
+    "cassandra_import_newer_files",
     "cassandra_axonops_problems", "cassandra_axonops_unavailable",
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",

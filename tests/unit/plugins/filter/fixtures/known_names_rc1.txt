@@ -1539,6 +1539,7 @@ import_cluster_ring_nodes	names
 import_cluster_running	names
 import_cluster_series	names
 import_cluster_slurp	names
+import_cluster_start_record	names
 import_cluster_storage_dir	names
 import_cluster_system_java	names
 import_cluster_unit	names

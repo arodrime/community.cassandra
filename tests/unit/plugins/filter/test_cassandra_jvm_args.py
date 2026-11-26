@@ -2683,3 +2683,39 @@ def test_one_rule_for_the_options_a_command_line_does_not_show():
     assert _shown_args(cmdline, {"JAVA_TOOL_OPTIONS": "-Dx=1"}) is None
     assert _shown_args(cmdline.replace("-Xss256k", "@/opt/x/args")) is None
     assert _shown_args("java\0-Xss256k") is None  # not Cassandra's: nothing proven
+
+
+def writes_restart(files, new, running, series="50x", java="17", changed=("cassandra-env.sh",)):
+    """The restart _writes_restarts says for the files changed rewritten from files to new on a running node."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import _writes_restarts
+    writes = [{"file": f, "what": "rewritten", "why": ["layout"], "diff": [], "restart": ""} for f in changed]
+    return _writes_restarts(writes, new, files, series, java, dict(running, up=True), {})[0]["restart"]
+
+
+def test_the_restart_said_takes_every_input_of_apply_config_s_proof(tmp_path):
+    # (audit round 3) the files written since the start, the environment the JVM got, a cassandra.in.sh naming
+    # CASSANDRA_HEAPDUMP_DIR: each changes apply_config's proof, so each changes what the import says
+    files, new, changed, cmdline = written(tmp_path)
+    assert writes_restart(files, new, {"cmdline": cmdline}, changed=changed) == ""
+    # (JVM_EXTRA_OPTS from outside its unit, as the JVM has it: the proof gives up, apply_config restarts)
+    assert writes_restart(files, new, {"cmdline": cmdline, "environment": {"JVM_EXTRA_OPTS": "-Dx=1"}},
+                          changed=changed).startswith("a restart (")
+    # (a JVM file written since the start: no proof)
+    assert writes_restart(files, new, {"cmdline": cmdline, "newer": ["jvm-server.options"]}, changed=changed) == \
+        "a restart (jvm-server.options changed since Cassandra started: no proof)"
+    # 4.1, a plain CASSANDRA_HEAPDUMP_DIR a cassandra.in.sh may set before cassandra-env.sh
+    files = node_files("41x", HEAPDUMP)
+    shell = {"CASSANDRA_HEAPDUMP_DIR": "/srv/other"}
+    cmdline = launch(files, "11", tmp_path, environment=shell)
+    new = dict(files, **{"cassandra-env.sh": heap_dump_dir_of_role("41x", "/srv/zorglub/dumps")})
+    assert writes_restart(files, new, {"cmdline": cmdline}, "41x", "11") == ""
+    assert writes_restart(files, new, {"cmdline": cmdline, "heapdump_before": "/usr/share/cassandra/cassandra.in.sh"},
+                          "41x", "11").startswith("a restart (")
+    # its arguments not read: no proof (apply_config makes none), whatever the rest; outside its unit: refused
+    assert writes_restart(files, new, {"cmdline": ""}, "41x", "11") == \
+        "a restart (the running JVM's arguments not read: no proof)"
+    assert writes_restart(files, new, {"cmdline": "", "untrusted": "not started by the cassandra unit (pid 7 is not"
+                                       " in its control group)"}, "41x", "11").startswith("refused: ")
+    # the JDK it runs replaced since it started: its Java not known, as apply_config reads it (/proc/<pid>/exe)
+    assert writes_restart(files, new, {"cmdline": cmdline, "java_gone": True}, "41x", "11") == \
+        "a restart (the running Java not known: no proof)"

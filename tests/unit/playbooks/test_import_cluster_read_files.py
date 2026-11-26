@@ -106,7 +106,7 @@ def trusted(value):
 
 def wanted(task, **variables):
     variables = dict(task["vars"], _files=READ["vars"]["_files"], _cassandra_service_config_files=["cassandra.yaml"],
-                     **variables)
+                     _cassandra_service_config_snapshot="/var/lib/cassandra/.ansible_config_at_start.json", **variables)
     variables = dict((k, trusted(v) if k in task["vars"] or k == "_files" else v) for k, v in variables.items())
     out = templar_for(variables).template(trust_as_template(task["vars"]["_wanted"]))
     return dict((w, (how, items)) for w, how, items in json.loads(json.dumps(out)))  # (as the command gets it)
@@ -124,6 +124,8 @@ def test_what_the_first_command_reads():
     assert out["cmdline"] == ("content", [["cmdline", "/proc/42/cmdline"]])
     assert out["repo"] == ("content", [["/etc/yum.repos.d/cassandra-41x.repo"] * 2])
     assert out["unit"] == ("content", [["cassandra.service", "/etc/systemd/system/cassandra.service"]])
+    # (audit round 3) apply_config's record of the start: the files written since it, as apply_config takes them
+    assert out["record"] == ("content", [["record", "/var/lib/cassandra/.ansible_config_at_start.json"]])
     # the unit kept (not the role's): not read; no JVM pid: no arguments; Debian: the apt credentials too
     node = dict(NODE)
     node.update(import_cluster_keep={"cassandra_service_unit_manage": False}, cassandra_jvm={"pid": ""},

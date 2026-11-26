@@ -1550,7 +1550,8 @@ def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
     lines = report([node(i) for i in range(1, 4)], self_check=checks, screen=True, width=200)
     assert sync(lines) == ["  in sync with Ansible: yes",
                            "    the next apply_config, no restart:",
-                           "      cassandra-env.sh       rewritten: layout  on node1, node2",
+                           "      cassandra-env.sh       rewritten: layout",
+                           "                             on node1, node2",
                            "      jvm-server.options     rewritten: heap placement",
                            "      jvm17-server.options   rewritten: heap placement",
                            "      cassandra.yaml         header line added",
@@ -1718,13 +1719,26 @@ def test_a_rewrite_with_a_restart_is_never_said_without_restart():
     checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[1:3] + ([yaml] if i == 1 else [])}
               for i in (1, 2)}
     lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
-    assert sync(lines)[1:5] == [
+    # (audit round 3: one fact per line, every line in 79 columns)
+    assert sync(lines)[1:6] == [
         "    the next apply_config:",
         "      cassandra.yaml         rewritten: bogus_key removed (Cassandra 4.1.5",
-        "                             rejects it); a restart (Cassandra reads it at its",
-        "                             start only)  on node1"]
+        "                             rejects it)",
+        "                             a restart (Cassandra reads it at its start only)",
+        "                             on node1"]
     said = " ".join(" ".join(line.split()) for line in lines)
     assert "WHAT HAPPENS: a restart of node1 (for cassandra.yaml)" in said, said
+    # Cassandra outside its unit on node2: apply_config refuses its restart, said so, with its way out
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import REFUSED
+    checks["node2"] = dict(checks["node2"], writes=PROD_WRITES[1:2] + [dict(yaml, restart=REFUSED)])
+    lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
+    assert "refused: Cassandra runs outside its cassandra unit" in " ".join(" ".join(line.split()) for line in sync(lines))
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "a real run refuses the restart of node2 (Cassandra outside its unit)" in said, said
+    # a node not read: the rows say which nodes they cover
+    lines = report([node(1), node(2, read=False)], self_check={"node1": checks["node1"]}, screen=True, width=200,
+                   ok=True, allow_unread=True)
+    assert "      on the nodes read: node1" in sync(lines), sync(lines)
     # the self-check found differences: no diffs of rewrites "with no effect" in the details
     checks["node2"] = dict(checks["node2"], differences=["cassandra.yaml: x: node has 1, import would write 2"])
     details = report([node(1), node(2)], self_check=checks, ok=False, details=True)

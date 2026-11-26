@@ -563,6 +563,7 @@ def _self_check_node(files_data, hosts, node, names, data, inventory_dir=""):
     # (up: Cassandra runs there, its arguments read or not: import_running.sh found its JVM)
     running = {"cmdline": b64decode(cmdline) if cmdline else "", "newer": hv.get("import_cluster_newer_files") or [],
                "up": (hv.get("import_cluster_running") or {}).get("rc") == 0,
+               "untrusted": unit.get("jvm_untrusted") or "", "java_gone": bool(hv.get("import_cluster_java_updated")),
                "environment": unit.get("jvm_env") or {}, "heapdump_before": unit.get("heapdump_before") or ""}
     return name, _self_check(
         files_data, hosts, name, hv["ansible_facts"], live, unit.get("env", {}),
@@ -929,7 +930,8 @@ HEAP_LINE = re.compile(r"^-Xm[snx]")
 def apply_config_writes(rendered, live, storage_dir="", series="", java="", password_line=False, release=""):
     """What cassandra_config would write on a node whose files are live ({file: text}) from rendered ({file: the
     role's text}), the files it leaves as they are aside (the same text, or the same settings and its header line
-    there): [{file, what: rewritten | header, why: [reason], diff: [line], restart}], sorted by file.
+    there): [{file, what: created | rewritten | header, why: [reason], diff: [line], restart}], the files it creates
+    first (an options file of another Java the node lacks), then by file.
     A file of the same settings gets the role's header line (cassandra_config_header). One with other settings (the
     self-check found no difference, else it is one) is rewritten, why: "heap placement" (an options file whose -Xms,
     -Xmx, -Xmn lines differ), "Java N does not read it" (the options file of another Java), the keys of cassandra.yaml
@@ -939,6 +941,13 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
     jmxremote.password). restart: "" (_writes_restarts says it)."""
     out = []
     reads = jvm.options_file(series, java)
+    for name in sorted(f for f in rendered if f not in live and f not in OTHER_ROLES_FILES):
+        # (created: an options file of another Java, its absence no difference; any other one is a difference)
+        other = re.match(r"^jvm(\d+)-server\.options$", name)
+        if other and reads and name != reads:
+            out.append({"file": name, "what": "created", "why": ["Java %s does not read it" % jvm.java_major(java)],
+                        "diff": list(difflib.unified_diff([], mask(rendered[name]).split("\n"), "%s (none)" % name,
+                                                          "%s (the role's)" % name, lineterm="")), "restart": ""})
     for name in sorted(f for f in rendered if f in live and f not in OTHER_ROLES_FILES):
         node, role = live[name], rendered[name]
         if node == role:
@@ -977,32 +986,69 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
     return out
 
 
+# a restart apply_config refuses: Cassandra runs outside its unit (its way out, as apply_config says it)
+REFUSED = ("refused: Cassandra runs outside its cassandra unit, a restart would start a second one (stop it, start"
+           " it with systemctl start cassandra, then run apply_config)")
+
+
 def _writes_restarts(writes, rendered, live, series, java, running, node_environment, local_jmx=True):
     """writes (apply_config_writes') with the restart apply_config makes for them on this node, decided as it decides
     it: none when Cassandra is not running (running: up false); jmxremote.password none (read at each JMX login),
     jmxremote.access one with remote JMX (read at start); its config files proven together by
-    cassandra_apply_config_no_effect over the files it writes (the running JVM's arguments, its Java, its
-    environment, the files written since it started), else a restart for all of them -> writes."""
+    cassandra_apply_config_no_effect over the files it writes, with the running JVM's arguments (none read, e.g. a
+    JVM outside its unit or its environment unreadable, running: untrusted: no proof, as apply_config makes none),
+    its Java (the JDK it runs replaced since it started, running: java_gone: not known), its environment, the files
+    written since it started; else a restart for all of them, said with why; a restart of a JVM outside its unit is
+    refused by apply_config (REFUSED) -> writes."""
     running = running or {}
-    rewritten = [w["file"] for w in writes if w["what"] == "rewritten"]
+    rewritten = [w["file"] for w in writes if w["what"] in ("rewritten", "created")]
     config = [f for f in rewritten if not f.startswith("jmxremote.")]
     if not running.get("up") or not rewritten:
         return writes
     environ = dict(node_environment or {}, **(running.get("environment") or {}))
-    proven = bool(config) and bool(cassandra_apply_config_no_effect(
-        config, live, rendered, running.get("cmdline") or "", series, java, environ, running.get("newer") or [],
-        running.get("facts"), running.get("heapdump_before") or ""))
+    cmdline = running.get("cmdline") or ""
+    java = "" if running.get("java_gone") else java
+    newer = running.get("newer") or []
+
+    def proof(files):
+        return bool(files) and bool(cmdline) and bool(cassandra_apply_config_no_effect(
+            files, live, rendered, cmdline, series, java, environ, newer, running.get("facts"),
+            running.get("heapdump_before") or ""))
+    proven = proof(config)
+    # (not proven: each file's own proof, to say which one stops it)
+    alone = {} if proven or not cmdline else dict((f, proof([f])) for f in config)
+    outside = "not started by the cassandra unit" in str(running.get("untrusted") or "")
     for w in writes:
-        if w["what"] != "rewritten" or w["file"] == "jmxremote.password":
+        if w["what"] not in ("rewritten", "created") or w["file"] == "jmxremote.password":
             continue
         if w["file"] == "jmxremote.access":
             w["restart"] = "" if local_jmx else "a restart (jmxremote.access: read at start)"
         elif not proven:
-            others = [f for f in config if f != w["file"] and not NO_RESTART_PROOF.match(f)]
-            w["restart"] = ("a restart (Cassandra reads it at its start only)" if not NO_RESTART_PROOF.match(w["file"])
-                            else "a restart (with %s)" % ", ".join(others) if others
-                            else "a restart (no proof the running Cassandra keeps what it runs)")
+            others = [f for f in config if f != w["file"] and not alone.get(f)]
+            w["restart"] = "a restart (%s)" % ("with %s" % ", ".join(others) if alone.get(w["file"]) and others
+                                               else _no_proof_why(w["file"], cmdline, java, newer))
+        if w["restart"] and outside:
+            w["restart"] = REFUSED
     return writes
+
+
+def _no_proof_why(name, cmdline, java, newer):
+    """Why apply_config cannot prove no restart for the file name it writes (its own proof: cmdline, the running
+    JVM's arguments; java, its Java; newer, the files written since it started)."""
+    if not NO_RESTART_PROOF.match(name):
+        return "Cassandra reads it at its start only"
+    if not cmdline:
+        return "the running JVM's arguments not read: no proof"
+    if name in newer:
+        return "%s changed since Cassandra started: no proof" % name
+    if name == "logback.xml":
+        return 'logback reads it again only with scan="true" on both sides'
+    if not java:
+        return "the running Java not known: no proof"
+    changed = sorted(f for f in newer if NO_RESTART_PROOF.match(f))
+    if changed:
+        return "%s changed since Cassandra started: no proof" % ", ".join(changed)
+    return "no proof the running Cassandra keeps what it runs"
 
 
 # the files apply_config's own proof of no restart covers (cassandra_apply_config_no_effect)

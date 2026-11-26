@@ -674,10 +674,16 @@
              + ([['cmdline', 'content', [['cmdline', '/proc/' ~ cassandra_jvm.pid ~ '/cmdline']]]]
                 if _supported | bool and cassandra_jvm.pid | default('') != ''
                    and import_cluster_unit.jvm_untrusted | default('') == '' else [])
-             + ([['repo', 'content', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else [])
              + ([['unit', 'content', [['cassandra.service', import_cluster_unit.file]]]]
                 if _supported | bool and 'cassandra_service_unit_manage' not in import_cluster_keep
-                   and import_cluster_unit.file != '' and import_cluster_unit.script | default('') == '' else []) }}
+                   and import_cluster_unit.file != '' and import_cluster_unit.script | default('') == '' else [])
+             + _wanted_more }}
+        # apply_config's record of the files the running Cassandra started with (the files written since it
+        # started, as apply_config takes them); the repository files
+        _wanted_more: >-
+          {{ ([['record', 'content', [['record', _cassandra_service_config_snapshot]]]]
+              if _supported | bool and cassandra_jvm.start is defined else [])
+             + ([['repo', 'content', _repo | zip(_repo) | list]] if import_cluster_repo_files | default([]) | length > 0 else []) }}
 
     - name: Keep what was read
       ansible.builtin.set_fact:
@@ -686,16 +692,19 @@
         import_cluster_jvm_cmdline: "{{ _read.cmdline | default([{}]) | first }}"
         import_cluster_repo_slurp: {results: "{{ _read.repo | default([]) }}"}
         import_cluster_unit_slurp: "{{ _read.unit | default([{}]) | first }}"
+        # apply_config's record of the files the running Cassandra started with (none: not managed yet)
+        import_cluster_start_record: "{{ (_read.record | default([{}]) | first).content | default('') }}"
       no_log: true
       when: import_cluster_files is not skipped
       vars:
         _read: "{{ import_cluster_files.stdout | from_json if import_cluster_files.rc | default(1) == 0 else {} }}"
 
+    # as apply_config takes them: its record of that start when there is one, else the files' times
     - name: Note the ones written since it started
       ansible.builtin.set_fact:
         import_cluster_newer_files: >-
-          {{ import_cluster_conf_files.files | selectattr('ctime', '>', cassandra_jvm.start | float)
-             | map(attribute='path') | map('basename') | sort }}
+          {{ import_cluster_conf_files | community.cassandra.cassandra_import_newer_files(cassandra_jvm,
+               import_cluster_start_record | default(''), import_cluster_slurp.results | default([])) }}
       when: import_cluster_conf_files.files is defined
 
     # remote JMX users: the password and access files the JVM reads, whatever their names (its arguments, else

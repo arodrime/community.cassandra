@@ -1477,8 +1477,9 @@ def _no_effect_lines(report, self_check):
         for note in check.get("notes") or []:
             if note.endswith(NO_EFFECT_NOTE):
                 found.setdefault(note[:-len(NO_EFFECT_NOTE)], []).append(name)
+    width = min(report.width, SYNC_WIDTH)  # (one fact per line, its nodes on the next one)
     return [line for text, members in found.items()
-            for line in fill_text("%s   %s" % (text, unbreakable(_who(report, members))), report.width, "    ", "  ")]
+            for line in fill_text(text, width, "    ", "  ") + fill_text(_who(report, members), width, "      ", "  ")]
 
 
 def _left_alone_lines(report):
@@ -1894,7 +1895,7 @@ def _writes(report, self_check):
     found = {}
     for name in report.names:
         for w in ((self_check or {}).get(name) or {}).get("writes") or []:
-            found.setdefault((w["what"] != "rewritten", w["file"], w["what"], tuple(w["why"]), w.get("restart") or ""),
+            found.setdefault((w["what"] == "header", w["file"], w["what"], tuple(w["why"]), w.get("restart") or ""),
                              []).append(name)
     return [(f, what, list(why), restart, members)
             for (dummy, f, what, why, restart), members in sorted(found.items())]
@@ -1909,7 +1910,7 @@ def _writes_diff_lines(report, self_check):
     found = {}
     for name in report.names:
         for w in ((self_check or {}).get(name) or {}).get("writes") or []:
-            if w["what"] == "rewritten":
+            if w["what"] != "header":
                 found.setdefault((w["file"], tuple(w["diff"])), []).append(name)
     lines = []
     for (f, diff), members in sorted(found.items()):
@@ -1918,22 +1919,22 @@ def _writes_diff_lines(report, self_check):
     return ["", "%s  (their diffs)" % WRITES_DIFFS] + lines if lines else []
 
 
-def _restarts(writes):
-    """The nodes of _writes apply_config restarts, the files it restarts them for -> (sorted [node], sorted [file])."""
-    found = [(members, f) for f, dummy, dummy2, restart, members in writes if restart]
+def _restarts(writes, refused=False):
+    """The nodes of _writes apply_config restarts (refused: the ones whose restart it refuses, Cassandra outside its
+    unit), the files it restarts them for -> (sorted [node], sorted [file])."""
+    found = [(members, f) for f, dummy, dummy2, restart, members in writes
+             if restart and restart.startswith("refused") == refused]
     return sorted(set(n for members, dummy in found for n in members)), sorted(set(f for dummy, f in found))
 
 
 def _writes_rows(report, writes):
-    """A row each of _writes: what the file gets and why, the restart for it, its nodes when not all the nodes read
-    -> [(file, text)]."""
+    """The rows of _writes, one fact each: a file with what it gets and why, under it the restart for it, then its
+    nodes when not all the nodes read -> [(file, text)]."""
     rows = []
     for f, what, why, restart, members in writes:
-        text = "header line added" if what == "header" else "rewritten: %s" % ", ".join(why)
-        text += "; %s" % restart if restart else ""
-        if len(members) < len(report.names):
-            text += "  on %s" % out.nodes(members)
-        rows.append((f, text))
+        rows.append((f, "header line added" if what == "header" else "%s: %s" % (what, ", ".join(why))))
+        rows += [("", restart)] if restart else []
+        rows += [("", "on %s" % out.nodes(members))] if len(members) < len(report.names) else []
     return rows
 
 
@@ -1994,7 +1995,10 @@ def _next_writes_lines(report, self_check, width):
     lines = []
     writes = _writes(report, self_check)
     if writes or others:
-        lines.append("    the next apply_config%s:" % ("" if _restarts(writes)[0] else ", no restart"))
+        lines.append("    the next apply_config%s:" % (
+            "" if _restarts(writes)[0] or _restarts(writes, True)[0] else ", no restart"))
+        if report.unread:  # (what it does on a node not read is not known)
+            lines += fill_text("on the nodes read: %s" % out.nodes(report.names), width, "      ", "  ")
         lines += aligned_rows(_writes_rows(report, writes), "      ", width)
     if writes:
         details = re.sub(r"\.txt$", "", report.report_name) + ".details.txt"
@@ -2080,11 +2084,13 @@ def _apply_config_expects(writes, rewrites):
     apply_config, no restart" (writes, _writes'), the rewrites with no effect (rewrites) -> text."""
     if not writes:
         return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
+    restarted, refused = _restarts(writes), _restarts(writes, True)
+    happens = ["a restart of %s (for %s)" % (out.nodes(restarted[0]), ", ".join(restarted[1]))] if restarted[0] else []
+    happens += ["a real run refuses the restart of %s (Cassandra outside its unit)" % out.nodes(refused[0])] \
+        if refused[0] else []
     return "WOULD CHANGE: the %s the head lists under the next apply_config%s; WHAT HAPPENS: %s" % (
         out.plural(len(set(w[0] for w in writes)), "file"),
-        ", and the rewrites under %s" % REWRITES if rewrites else "",
-        "no restart" if not _restarts(writes)[0] else "a restart of %s (for %s)" % (
-            out.nodes(_restarts(writes)[0]), ", ".join(_restarts(writes)[1])))
+        ", and the rewrites under %s" % REWRITES if rewrites else "", "; ".join(happens) or "no restart")
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, writes,

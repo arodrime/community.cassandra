@@ -2100,7 +2100,7 @@ def test_the_writes_restart_is_apply_config_s_own_decision():
     env_role = {"cassandra-env.sh": "JVM_OPTS=-Xss256k\nX=1\n"}
     # running, its arguments not read (a JVM the import does not trust): apply_config has no proof either, a restart
     assert restarts(env_role, env_node, {"up": True, "cmdline": ""}) == {
-        "cassandra-env.sh": "a restart (no proof the running Cassandra keeps what it runs)"}
+        "cassandra-env.sh": "a restart (the running JVM's arguments not read: no proof)"}
     # not running: no restart (written for its next start)
     assert restarts(env_role, env_node, {"up": False, "cmdline": ""}) == {"cassandra-env.sh": ""}
     # logback.xml with the Java not known: scan="true" on both sides, read again with no restart; without, a restart
@@ -2110,14 +2110,69 @@ def test_the_writes_restart_is_apply_config_s_own_decision():
     assert restarts(scan, scan_node, running, java="") == {"logback.xml": ""}
     no_scan = dict((f, t.replace(' scan="true"', "")) for f, t in scan.items())
     assert restarts(no_scan, {"logback.xml": scan_node["logback.xml"].replace(' scan="true"', "")}, running,
-                    java="") == {"logback.xml": "a restart (no proof the running Cassandra keeps what it runs)"}
+                    java="") == {"logback.xml": 'a restart (logback reads it again only with scan="true" on both sides)'}
     # an options file the running Java does not read, another file written since the start: no restart
     jvm8 = {"jvm8-server.options": "-XX:+UseParNewGC\n"}
     jvm8_node = {"jvm8-server.options": "-XX:+UseConcMarkSweepGC\n", "cassandra.yaml": "a: 1\n"}
     assert restarts(jvm8, jvm8_node, dict(running, newer=["cassandra.yaml"])) == {"jvm8-server.options": ""}
+    # (round 3) its arguments not read, e.g. a JVM outside its unit: apply_config makes no proof at all, even one
+    # that needs no arguments (a file its Java does not read, logback scanning)
+    unread = {"up": True, "cmdline": "", "newer": []}
+    assert restarts(jvm8, jvm8_node, unread) == {
+        "jvm8-server.options": "a restart (the running JVM's arguments not read: no proof)"}
+    assert restarts(scan, scan_node, unread, java="") == {
+        "logback.xml": "a restart (the running JVM's arguments not read: no proof)"}
     # the JMX files: the password one read at each login, the access one at start with remote JMX
     jmx = {"jmxremote.password": "# managed\ncassandra s3cret\n", "jmxremote.access": "# m\ncassandra readwrite\n"}
     jmx_node = {"jmxremote.password": "cassandra other\n", "jmxremote.access": "cassandra readonly\n"}
     assert restarts(jmx, jmx_node, running, local_jmx=False) == {
         "jmxremote.password": "", "jmxremote.access": "a restart (jmxremote.access: read at start)"}
     assert restarts(jmx, jmx_node, running)["jmxremote.access"] == ""
+    # a JVM file written with a file read at start only: restarted with it
+    both = {"cassandra.yaml": "cluster_name: x\n", "logback.xml": scan["logback.xml"]}
+    both_node = {"cassandra.yaml": "cluster_name: x\nbogus_key_never: 3\n", "logback.xml": scan_node["logback.xml"]}
+    assert restarts(both, both_node, running) == {"cassandra.yaml": "a restart (Cassandra reads it at its start only)",
+                                                  "logback.xml": "a restart (with cassandra.yaml)"}
+
+
+def test_the_writes_restart_reads_the_node_s_variables_and_its_running_flag():
+    # (audit round 3) the restart said for jmxremote.access follows the node's cassandra_local_jmx (remote JMX: read
+    # at start, a restart); "running" is what import_running.sh found (its rc), not whether the arguments were read
+    files = seeded(stock("50x"))
+    files["cassandra-env.sh"] = edit(edit(files["cassandra-env.sh"], "    LOCAL_JMX=yes", "    LOCAL_JMX=no"),
+                                     "#JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file",
+                                     "JVM_OPTS=\"$JVM_OPTS -Dcom.sun.management.jmxremote.access.file")
+    files["jmxremote.password"] = "cassandra s3cret\nops 0ps\n"
+    files["jmxremote.access"] = "cassandra readwrite\nops readonly\n"
+    users = cassandra_config_import(files, "50x", FACTS)["vars"]["cassandra_jmx_users"]
+    out = check(files, "50x", tamper={"cassandra_jmx_users": users[:-1]}, cmdline="java")
+    assert [w["restart"] for w in out["writes"] if w["file"] == "jmxremote.access"] == [
+        "a restart (jmxremote.access: read at start)"]
+    # running, its arguments not read (no cmdline): what import_running.sh found counts
+    stocked = seeded(stock("50x"))
+    stocked["cassandra.yaml"] += "bogus_key_never: 3\n"  # (a key 5.0 rejects: left out, the file rewritten)
+    inventory, layout = import_node(stocked, "50x")
+    hv = {"import_cluster_slurp": slurped(stocked), "ansible_facts": FACTS, "import_cluster_conf_dir": "",
+          "import_cluster_storage_dir": "/var/lib/cassandra", "import_cluster_java": "17",
+          "import_cluster_unit": {"env": {}}, "import_cluster_perms": {"files": {}}, "import_cluster_running": {"rc": 0},
+          "import_cluster_config": {"release": "5.0.2"}}
+    nodes = [{"address": "10.0.0.1", "host": "h1", "read": True}]
+    found = cassandra_import_self_check_nodes(inventory, layout["hosts"], nodes, {"10.0.0.1": "n1"}, {"h1": hv})["n1"]
+    assert [(w["file"], w["restart"]) for w in found["writes"] if w["what"] == "rewritten"] == [
+        ("cassandra.yaml", "a restart (Cassandra reads it at its start only)")], found["writes"]
+    hv["import_cluster_running"] = {"rc": 3}  # (none runs: written for its next start)
+    found = cassandra_import_self_check_nodes(inventory, layout["hosts"], nodes, {"10.0.0.1": "n1"}, {"h1": hv})["n1"]
+    assert [w["restart"] for w in found["writes"]] == ["" for w in found["writes"]]
+
+
+def test_a_file_apply_config_creates_is_in_the_writes():
+    # (audit round 3) an options file of another Java the node lacks: apply_config creates it (no difference, its
+    # Java does not read it): listed and counted with the others
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import apply_config_writes
+    out = apply_config_writes({"jvm8-server.options": "-XX:+UseParNewGC\n", "cassandra.yaml": "a: 1\n"},
+                              {"cassandra.yaml": "a: 1\n"}, series="41x", java="11")
+    assert [(w["file"], w["what"], w["why"]) for w in out] == [
+        ("jvm8-server.options", "created", ["Java 11 does not read it"])]
+    assert "+-XX:+UseParNewGC" in out[0]["diff"]
+    # (the file of the running Java missing: a difference, not a write of no effect)
+    assert apply_config_writes({"jvm11-server.options": "-XX:+UseG1GC\n"}, {}, series="41x", java="11") == []
