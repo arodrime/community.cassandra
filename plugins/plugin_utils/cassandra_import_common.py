@@ -61,6 +61,46 @@ HOSTNAME = "{{ ansible_facts['hostname'] }}"
 # a value not there (not None, which a node may have): the layout's nodes without a key, cassandra_drift
 MISSING = object()
 
+# the values Ansible's bool filter reads as true or false (its to_bool, 2.16 and since; a text in any case, as it is:
+# no strip); anything else is no boolean here (as_bool gives it back)
+_TRUE = ("yes", "on", "1", "true")
+_FALSE = ("no", "off", "0", "false")
+
+
+def as_bool(value):
+    """value as Ansible's bool filter reads it: True or False for a boolean, 1 or 0, or one of its texts (any case);
+    None as None; anything else given back as it is (not a boolean the roles would read as they mean it)."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return {1: True, 0: False}.get(value, value)
+    if isinstance(value, str):
+        return True if value.lower() in _TRUE else False if value.lower() in _FALSE else value
+    return value
+
+
+@functools.lru_cache(maxsize=None)
+def bool_read_settings():
+    """The settings the roles and playbooks read with Ansible's bool filter (x | bool, x | default(y) | bool): their
+    sources say it (a templated default too), not the type of the default."""
+    top = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    found = set()
+    for base, dummy, names in os.walk(os.path.join(top, "roles")):
+        for name in names:
+            if name.endswith((".yml", ".yaml", ".j2")):
+                found |= _bool_reads(os.path.join(base, name))
+    for name in os.listdir(os.path.join(top, "playbooks")):
+        if name.endswith(".yml"):
+            found |= _bool_reads(os.path.join(top, "playbooks", name))
+    return frozenset(found)
+
+
+def _bool_reads(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return set(re.findall(r"\b(cassandra_\w+)\s*(?:\|\s*default\([^)]*\)\s*)?\|\s*bool\b", text))
+
+
 # The undefined errors naming a field or a variable, nothing else of the data.
 # Jinja words a missing dict key (d[key]) the same way: nothing here or in the
 # playbook may index a dict with a key read from the nodes.

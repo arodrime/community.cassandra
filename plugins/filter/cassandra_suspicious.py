@@ -14,6 +14,7 @@ import re
 from ansible.module_utils.parsing.convert_bool import boolean
 
 from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
+from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import as_bool
 
 KEPT = "cassandra_settings_kept_on_purpose"
 # lines a node has that no variable covers (the import's hand edits), checked as its extra JVM options are
@@ -188,16 +189,86 @@ def _large(values, node):
     return found
 
 
+def _symbolic(text):
+    """A symbolic mode (u=rw,go=r; a=r,go-r; go+r) applied in order -> whether its group or others can read the
+    file: their read bit as its clauses set it (=, +r, -r set it whatever the mode before); None when they leave it
+    to the mode before (not known here), or when it is no symbolic mode."""
+    read = {"u": None, "g": None, "o": None}  # (the read bit of each class: None while no clause set it)
+    for clause in text.split(","):
+        found = re.match(r"^([ugoa]*)([-+=])([rwxXst]*)$", clause)
+        if not found:
+            return None
+        who, op, perms = found.groups()
+        for c in set(who.replace("a", "ugo") or "ugo"):
+            if op == "=" or "r" in perms:
+                read[c] = "r" in perms if op == "=" else op == "+"
+    if read["g"] or read["o"]:
+        return True
+    return False if read["g"] is False and read["o"] is False else None
+
+
+def _readable(mode):
+    """A file mode that lets users other than the owner read the file: octal ("0644", "644", "0o644"; 420, YAML's
+    0644 unquoted) or symbolic ("u=rw,g=r", applied in order); None when it is neither, or a symbolic one leaves
+    the read bits to the mode before ("u=rw": not known, no finding either way)."""
+    if isinstance(mode, int) and not isinstance(mode, bool):
+        return bool(mode & 0o044)
+    text = str(mode or "").strip()
+    if re.match(r"^(0o?)?[0-7]{3,4}$", text):  # (0644, 644, 0o644)
+        return bool(int(text.replace("o", ""), 8) & 0o044)
+    return _symbolic(text) if text else None
+
+
+def _shown(mode):
+    """A mode as the inventory writes it (YAML's 0644 unquoted is the number 420)."""
+    return "0%o" % mode if isinstance(mode, int) and not isinstance(mode, bool) else str(mode)
+
+
+def _where(values, plural=False):
+    """How a finding says where a mode comes from: the node's file as the import read it, else the inventory."""
+    verb = "are" if plural else "is"
+    return verb + (" mode %s on {nodes}" if LINES in values else " set to mode %s in the inventory for {nodes}")
+
+
 def _jmx_passwords_readable(values, node):
     """jmxremote.password readable by other users than its owner (its mode, as the inventory keeps it)."""
     perms = values.get("cassandra_config_file_permissions")
     entry = perms.get("jmxremote.password") if isinstance(perms, dict) else None
-    mode = str((entry.get("mode") if isinstance(entry, dict) else entry) or "")  # ({mode, owner, group}, or the mode)
-    if re.match(r"^0?[0-7]{3}$", mode) and int(mode, 8) & 0o077:
-        return [("jmxremote.password is mode %s on {nodes}: users other than its owner can read the JMX passwords"
-                 % mode, "make it 0600: mode 0600 for jmxremote.password in cassandra_config_file_permissions,"
+    mode = entry.get("mode") if isinstance(entry, dict) else entry  # ({mode, owner, group}, or the mode)
+    if mode is not None and _readable(mode):
+        return [(("jmxremote.password " + _where(values) + ": users other than its owner can read the JMX passwords")
+                 % _shown(mode), "make it 0600: mode 0600 for jmxremote.password in cassandra_config_file_permissions,"
                  " then apply_config")]
     return []
+
+
+def _key_file(values):
+    """Whether the role writes Medusa's storage key file: S3 keys given, and a key file to write them in (the default
+    one unless set to "")."""
+    named = values.get("cassandra_medusa_key_file") if "cassandra_medusa_key_file" in values else "default"
+    return bool(str(values.get("cassandra_medusa_s3_access_key_id") or "").strip()) and bool(str(named or "").strip())
+
+
+def _medusa_secrets_readable(values, node):
+    """medusa.ini and Medusa's storage key file (when the role writes one) readable by other users than their owner
+    (their modes, as the inventory sets them; the key file's follows medusa.ini's unless set); none when Medusa is
+    not on (cassandra_medusa_enabled: the role writes neither)."""
+    found = []
+    if as_bool(values.get("cassandra_medusa_enabled", False)) is not True:  # (as the playbooks read it: | bool)
+        return found
+    config, key_file = values.get("cassandra_medusa_config_mode"), values.get("cassandra_medusa_key_file_mode")
+    own_key_mode = "cassandra_medusa_key_file_mode" in values
+    if _readable(config):
+        both = _key_file(values) and not own_key_mode
+        files = "medusa.ini and the storage key file (its mode follows)" if both else "medusa.ini"
+        found.append(((files + " " + _where(values, both) + ": users other than their owner can read Medusa's secrets")
+                      % _shown(config), "remove cassandra_medusa_config_mode (the default is 0600), then apply_config"))
+    if _key_file(values) and own_key_mode and _readable(key_file):
+        found.append((("the storage key file of Medusa " + _where(values) + ": users other than its owner can read the"
+                       " storage credentials") % _shown(key_file),
+                      "remove cassandra_medusa_key_file_mode (the default follows cassandra_medusa_config_mode, 0600),"
+                      " then apply_config"))
+    return found
 
 
 # (id, the check: (the node's variables, {name, member}) -> [(the finding, "{nodes}" where the nodes go, what to
@@ -210,6 +281,7 @@ SUSPICIOUS = [
     ("failure_policy_ignore", _failure_policy),
     ("large_sizes", _large),
     ("jmx_passwords_readable", _jmx_passwords_readable),
+    ("medusa_secrets_readable", _medusa_secrets_readable),
 ]
 
 

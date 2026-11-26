@@ -62,8 +62,8 @@ def test_kept_given_another_way():
 def test_an_unknown_id_is_said():
     lines = cassandra_suspicious_settings({"node4": {KEPT: ["auto_bootstrap", "heap_size"]}, "node5": {KEPT: "auto_bootstrap"}})
     assert lines == ["%s: no check is called auto_bootstrap (node4, node5); the ids are auto_bootstrap_false, replace_address,"
-                     " heap_size, allow_all_authenticator, failure_policy_ignore, large_sizes, jmx_passwords_readable"
-                     % KEPT]
+                     " heap_size, allow_all_authenticator, failure_policy_ignore, large_sizes, jmx_passwords_readable,"
+                     " medusa_secrets_readable" % KEPT]
     assert KEPT == "cassandra_settings_kept_on_purpose"
 
 
@@ -215,8 +215,12 @@ def test_every_row_has_its_id_documented():
     ({"cassandra_native_transport_max_frame_size": "1024MiB"}, ["native_transport_max_frame_size 1024MiB on node4"]),
     ({"cassandra_native_transport_max_frame_size": "16MiB"}, []),
     ({"cassandra_config_file_permissions": {"jmxremote.password": {"mode": "0644"}}},
-     ["jmxremote.password is mode 0644 on node4"]),
-    ({"cassandra_config_file_permissions": {"jmxremote.password": "0640"}}, ["jmxremote.password is mode 0640 on node4"]),
+     ["jmxremote.password is set to mode 0644 in the inventory for node4"]),
+    ({"cassandra_config_file_permissions": {"jmxremote.password": "0640"}},
+     ["jmxremote.password is set to mode 0640 in the inventory for node4"]),
+    ({"cassandra_config_file_permissions": {"jmxremote.password": "0620"}}, []),  # (written by others, not read)
+    ({"cassandra_config_file_permissions": {"jmxremote.password": 0o644}},  # (YAML's 0644 unquoted)
+     ["jmxremote.password is set to mode 0644 in the inventory for node4"]),
     ({"cassandra_config_file_permissions": {"jmxremote.password": {"mode": "0600"}}}, []),
     ({"cassandra_config_file_permissions": {"cassandra.yaml": "0644"}}, []),
 ])
@@ -224,3 +228,59 @@ def test_large_sizes_and_readable_jmx_passwords(values, found):
     lines = cassandra_suspicious_settings({"node4": values})
     assert [line for line in lines if not line.startswith("  ")] == [
         line for line in lines if any(line.startswith(f) for f in found)] and len(lines) == 2 * len(found)
+
+
+# Medusa on, with S3 keys: the role writes the storage key file
+S3 = {"cassandra_medusa_enabled": True, "cassandra_medusa_s3_access_key_id": "AKIAEXAMPLE"}
+ON = {"cassandra_medusa_enabled": True}
+
+
+@pytest.mark.parametrize("values, found", [
+    (dict(S3, cassandra_medusa_config_mode="0644"),
+     ["medusa.ini and the storage key file (its mode follows) are set to mode 0644 in the inventory for node4: users"
+      " other than their owner can read Medusa's secrets"]),
+    (dict(ON, cassandra_medusa_config_mode="0644"),  # (no key file written: medusa.ini alone)
+     ["medusa.ini is set to mode 0644 in the inventory for node4: users other than their owner can read Medusa's"
+      " secrets"]),
+    (dict(S3, cassandra_medusa_config_mode=0o640, cassandra_medusa_key_file_mode="0600"),  # (YAML's 0640 unquoted)
+     ["medusa.ini is set to mode 0640 in the inventory for node4: users other than their owner can read Medusa's"
+      " secrets"]),
+    (dict(S3, cassandra_medusa_key_file_mode="644"),
+     ["the storage key file of Medusa is set to mode 644 in the inventory for node4: users other than its owner can"
+      " read the storage credentials"]),
+    ({"cassandra_medusa_key_file_mode": "644"}, []),  # (no key file written)
+    ({"cassandra_medusa_key_file": "/etc/medusa/gcs.json", "cassandra_medusa_key_file_mode": "0640"}, []),  # (no S3
+    # keys: the role writes no key file, a file of yours is left alone)
+    (dict(S3, cassandra_medusa_key_file="", cassandra_medusa_key_file_mode="0640"), []),  # (no key file to write)
+    (dict(S3, cassandra_medusa_key_file="/etc/medusa/mine", cassandra_medusa_key_file_mode="0640"),
+     ["the storage key file of Medusa is set to mode 0640 in the inventory for node4: users other than its owner"
+      " can read the storage credentials"]),
+    (dict(S3, cassandra_medusa_key_file="", cassandra_medusa_config_mode="0o644"),  # (Python's octal written)
+     ["medusa.ini is set to mode 0o644 in the inventory for node4: users other than their owner can read Medusa's"
+      " secrets"]),
+    ({"cassandra_medusa_config_mode": "0600"}, []),
+    ({"cassandra_medusa_config_mode": "0700", "cassandra_medusa_key_file_mode": 0o600}, []),
+    (dict(ON, cassandra_medusa_config_mode="u=rw,go=r"),  # (symbolic: read as chmod reads it)
+     ["medusa.ini is set to mode u=rw,go=r in the inventory for node4: users other than their owner can read"
+      " Medusa's secrets"]),
+    (dict(ON, cassandra_medusa_config_mode="u=rw,go="), []),
+    (dict(ON, cassandra_medusa_config_mode="a=r,go-r"), []),  # (in order: 0400)
+    (dict(ON, cassandra_medusa_config_mode="a+r"),  # (+r sets the read bit, whatever the mode before)
+     ["medusa.ini is set to mode a+r in the inventory for node4: users other than their owner can read Medusa's"
+      " secrets"]),
+    (dict(ON, cassandra_medusa_config_mode="go-r"), []),  # (-r clears it)
+    (dict(ON, cassandra_medusa_config_mode="u=rw"), []),  # (the group's and others' bits left as they were: not known)
+    (dict(ON, cassandra_medusa_config_mode="u=rw,g=r"),
+     ["medusa.ini is set to mode u=rw,g=r in the inventory for node4: users other than their owner can read"
+      " Medusa's secrets"]),
+    (dict(cassandra_medusa_enabled="yes", cassandra_medusa_config_mode="0644"),  # (Medusa on as | bool reads it)
+     ["medusa.ini is set to mode 0644 in the inventory for node4: users other than their owner can read Medusa's"
+      " secrets"]),
+    (dict(cassandra_medusa_enabled="y", cassandra_medusa_config_mode="0644"), []),  # (| bool: "y" is not true)
+    ({"cassandra_medusa_config_mode": "0644"}, []),  # (Medusa off: the role writes neither file)
+    ({"cassandra_medusa_config_mode": "{{ some_mode }}"}, []),  # (neither: not known, no finding)
+])
+def test_medusa_secrets_readable(values, found):
+    lines = cassandra_suspicious_settings({"node4": values})
+    assert lines[::2] == found
+    assert all(line.startswith("  remove cassandra_medusa_") for line in lines[1::2])
