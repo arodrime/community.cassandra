@@ -137,3 +137,18 @@ def test_a_long_diff_line_is_cut_to_79_columns(tmp_path):
     assert lines[at + 1].startswith("      |")
     assert (lines[at][len("      "):] + lines[at + 1][len("      |"):]).endswith(long_option + " \\")
     assert ("-" + long_option + " \\") in cassandra_apply_config_diff_text([node.data()], "c").split("\n")
+
+
+def test_the_diff_file_named_in_79_columns_or_not_at_all(tmp_path):
+    # (audit round 3) a long path of the .diff file cut after a /, never over 79 columns; without a file (its write
+    # failed), none named: the lines over DIFF_LINES "not shown"
+    long_jvm = JVM + "".join("-Dx%d=%d\n" % (i, i) for i in range(DIFF_LINES))
+    node = Node(tmp_path, "n1", files={"jvm-server.options": long_jvm})
+    path = "/srv/ansible/inventories/production-cluster-eu/reports/prod-eu/apply_config-check-2026-11-25-120000.diff"
+    for show_diff in (False, True):
+        lines = changes(node, show_diff=show_diff, diff_file=path)
+        assert [line for line in lines if len(line) > 79] == [], lines
+        assert "".join(line.strip() for line in lines).count(path) == 1, lines
+        unnamed = changes(node, show_diff=show_diff)
+        assert not [line for line in unnamed if "real diffs" in line or ".diff" in line], unnamed
+    assert [line for line in changes(node, show_diff=True) if "more lines" in line][0].endswith("more lines not shown)")

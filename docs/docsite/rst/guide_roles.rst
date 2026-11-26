@@ -1060,7 +1060,8 @@ all are, else ``on 6 nodes: node01..node06``, a group each), each file under the
 key, a nested one as ``parent.key``; ``-Dname``, ``NAME=``), with where a line moved from or to between the JVM's files;
 the role's header line added (a comment) and the OS settings (the read-ahead in KB) in blocks of their own, passwords
 as ``****``. With ``--diff``, each file's unified diff under it, once per group of nodes with the same one, 20 lines at
-most (a line too long cut to fit, ``\`` at the end of each part but its last); every diff is in full in ``reports/<cluster group>/apply_config-<stamp>.diff`` (under
+most (a line too long cut to fit, its next parts on lines starting with ``|`` where a diff line has its ``+``,
+``-`` or space); every diff is in full in ``reports/<cluster group>/apply_config-<stamp>.diff`` (under
 ``--check`` too), which the view names without ``--diff``. Ansible's own diffs of each task are not shown. Then
 ``WHAT HAPPENS``: the nodes done at once, the ones done one node at a time (a restart, a start, a firewall change),
 the restarts, ``no restart: the running Cassandra keeps what it read until its next restart`` when none, and what each

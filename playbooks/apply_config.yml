@@ -1211,6 +1211,10 @@
         cassandra_apply_config_diff: >-
           {{ _nodes | community.cassandra.cassandra_apply_config_changes(check=ansible_check_mode, width='terminal',
                margin=2, show_diff=ansible_diff_mode | bool, diff_file=_diff_path, cwd=lookup('ansible.builtin.env', 'PWD')) }}
+        # the same naming no .diff file: the view when it could not be written (below)
+        _cassandra_apply_config_diff_unnamed: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_changes(check=ansible_check_mode, width='terminal',
+               margin=2, show_diff=ansible_diff_mode | bool) }}
         # every file's diff, once per group of nodes with the same one: written next to the run's report (below)
         cassandra_apply_config_diff_path: "{{ _diff_path }}"
         cassandra_apply_config_diff_text: "{{ _nodes | community.cassandra.cassandra_apply_config_diff_text(_cluster, ansible_check_mode) }}"
@@ -1291,13 +1295,10 @@
           vars:
             cassandra_output: true
 
-        # (the view names a file that is not there: its lines naming it dropped, the diffs on screen cut short)
+        # (the view named a file that is not there: the one naming none instead)
         - name: Name no diffs file in the view
           ansible.builtin.set_fact:
-            cassandra_apply_config_diff: >-
-              {{ cassandra_apply_config_diff | reject('search', '^ *real diffs: ')
-                 | reject('search', (cassandra_apply_config_diff_path | basename | regex_escape) ~ '[)]?$')
-                 | map('regex_replace', '^( *[(][0-9]+ more lines): see.*$', '\1 not shown)') | list }}
+            cassandra_apply_config_diff: "{{ _cassandra_apply_config_diff_unnamed }}"
 
     - name: Group the nodes to do
       ansible.builtin.group_by:

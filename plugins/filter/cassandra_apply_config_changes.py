@@ -245,7 +245,7 @@ def cassandra_apply_config_changes(nodes, check=False, width="terminal", show_di
                 lines += _diff_lines(name, names, every, by_name, diff_file, width)
     # (the .diff file is written only when a file has a diff: not for header lines or OS settings alone)
     if not show_diff and diff_file and any(n["diffs"] for n in prepared):
-        lines += out.fit(["real diffs: %s" % diff_file], width)
+        lines += _naming(["real diffs:"], diff_file, width)
     return [title] + lines
 
 
@@ -254,6 +254,7 @@ def _cut(line, width):
     with CONTINUED where the diff's own lines have their +, - or space (no line of a unified diff starts so; the
     .diff file has it whole) -> [line]."""
     head = "      "
+    line = line.expandtabs()  # (a tab takes up to 8 columns on the screen: counted as such)
     if len(line) <= width:
         return [line]
     parts, rest = [line[:width]], line[width:]
@@ -281,10 +282,27 @@ def _diff_lines(name, names, every, by_name, diff_file, width):
             else out.nodes(members)
         lines += out.fit(["    %s diff on %s:" % ("same" if len(members) > 1 else "its", said)], width)
         lines += [cut for line in body[:DIFF_LINES] for cut in _cut("      " + line, width)]
-        if len(body) > DIFF_LINES:
-            lines += out.fit(["      (%d more lines: see %s)" % (len(body) - DIFF_LINES, diff_file or "the .diff file")],
-                             width)
+        if len(body) > DIFF_LINES and diff_file:
+            lines += _naming(["      (%d more lines: see" % (len(body) - DIFF_LINES)], diff_file + ")", width)
+        elif len(body) > DIFF_LINES:  # (no .diff file written)
+            lines.append("      (%d more lines not shown)" % (len(body) - DIFF_LINES))
     return lines
+
+
+def _naming(words, path, width):
+    """The lines of words then a path (a .diff file), in width: the path on the next line when it does not fit
+    there, cut after a / when it does not fit a line alone (indented 2 more) -> [line]."""
+    head = words[0]
+    if len(head) + 1 + len(path) <= width:
+        return [head + " " + path]
+    indent = " " * (len(head) - len(head.lstrip()) + 2)
+    lines, line = [head], indent
+    for part in re.findall(r"[^/]*/|[^/]+$", path):
+        if len(line) + len(part) > width and line.strip():
+            lines.append(line)
+            line = indent
+        line += part
+    return lines + [line]
 
 
 def cassandra_apply_config_diff_text(nodes, cluster="", check=False):
