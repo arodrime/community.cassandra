@@ -290,6 +290,30 @@ def _diff_lines(name, names, every, by_name, diff_file, width):
     return lines
 
 
+def _cut_words(text, width, hang):
+    """text in lines of width, the next ones from hang; a word longer than a line (a path in an error) cut after a
+    /, else where the line ends -> [line]."""
+    lines, line = [], ""
+    for word in text.split(" "):
+        while True:
+            fits = len(line) + bool(line) + len(word) <= width
+            if fits or (line.strip() and len(hang) + len(word) <= width):
+                if not fits:
+                    lines.append(line)
+                    line = hang
+                line += (" " if line.strip() else "") + word
+                break
+            room = width - len(line) - (1 if line.strip() else 0)
+            cut = word.rfind("/", 0, room) + 1 or room  # (after a / that fits, else where the line ends)
+            if cut <= 0 or room < 10:
+                lines.append(line)
+                line = hang
+                continue
+            lines.append(line + (" " if line.strip() else "") + word[:cut])
+            line, word = hang, word[cut:]
+    return lines + ([line] if line.strip() else [])
+
+
 def _naming(words, path, width):
     """The lines of words then a path (a .diff file), in width: the path on the next line when it does not fit
     there, cut after a / when it does not fit a line alone (indented 2 more), a name longer than a line cut where
@@ -344,9 +368,8 @@ def cassandra_apply_config_diff_text(nodes, cluster="", check=False, asked=True)
 def cassandra_apply_config_diff_warning(error, path, width=WIDTH):
     """The WARNING of a .diff file not written: the error as observed, then the file's path on lines of its own
     (cut after a /, _naming), then where another dir is set; every line in width -> [line]."""
-    lines = out.fit(["WARNING  the files' diffs of this run were not written: %s" % (error or "no error said")],
-                    int(width))
-    return lines + _naming(["  the file:"], str(path), int(width)) + [
+    return _cut_words("WARNING  the files' diffs of this run were not written: %s" % (error or "no error said"),
+                      int(width), "  ") + _naming(["  the file:"], str(path), int(width)) + [
         "  cassandra_run_report_dir can name another dir"]
 
 

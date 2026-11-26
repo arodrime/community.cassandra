@@ -834,12 +834,12 @@ def _outcome(node, check, plan):
         # the files written proven to change nothing for the running Cassandra: said in the --check recap and in the
         # recap of a real run too
         proven = [r for r in kept_running or [] if _proven(r)]
-        if plan and kept_running:
+        if (plan or check) and kept_running:  # (all its own reasons, a proof among them or not)
             text += " (%s)" % "; ".join(kept_running)
-        elif proven:
-            text = ("would apply, no restart" if check else "applied, not restarted") + " (%s)" % "; ".join(proven)
-        elif check and kept_running:  # (its own reasons, as in the plan)
-            text += " (%s)" % "; ".join(kept_running)
+        elif proven:  # (the recap of a real run)
+            text = "applied, not restarted (%s)" % "; ".join(proven)
+        elif check and os_only:  # (as the plan's "OS settings, live")
+            text += " (OS settings, live)"
         elif (plan or check) and then == "none" and not written_back:  # (no reason of its own)
             text += " (%s)" % KEEPS
         elif plan and then == "write" and node.get("unit_failed"):  # not stopped on purpose: this run does not start it

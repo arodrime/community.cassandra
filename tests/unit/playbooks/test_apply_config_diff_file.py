@@ -108,3 +108,11 @@ def test_the_diff_file_is_written_before_the_question():
     plan, question = names.index("Keep the plan for the report of the run"), names.index("Show the plan and confirm the run")
     assert write < plan < question
     assert "Note the diffs as written" not in names
+
+
+def test_the_head_says_whether_a_question_is_asked():
+    # (audit round 9) the .diff's head follows cassandra_operation_confirm: "once you answer yes" only with a question
+    side = find(FIND["tasks"], "Put the settings that differ side by side")
+    text = side["ansible.builtin.set_fact"]["cassandra_apply_config_diff_text"]
+    assert "cassandra_apply_config_diff_text(_cluster, ansible_check_mode," in text
+    assert "cassandra_operation_confirm | default(true) | bool" in text

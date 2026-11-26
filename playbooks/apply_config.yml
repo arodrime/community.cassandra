@@ -657,7 +657,7 @@
                 if _release | default(false) | bool else []) }}
         # why a node written while it runs is not restarted, said in the plan (the outcomes' own reason otherwise)
         cassandra_apply_config_kept_running: >-
-          {%- set out = ['an owner, group or mode: read at start'] if _perms + _dirs else [] -%}
+          {%- set out = [_perms_why] if _perms + _dirs else [] -%}
           {%- if 'jmxremote.password' in _jmx -%}{%- set _ = out.append('jmxremote.password: read at each JMX login') -%}{%- endif -%}
           {%- if 'jmxremote.access' in _jmx and not _rights -%}{%- set _ = out.append('jmxremote.access: local JMX checks no login') -%}{%- endif -%}
           {%- set kinds = _exporter | map(attribute='kind') | list -%}
@@ -665,7 +665,7 @@
           {%- if 'config' in kinds -%}{%- set _ = out.append('the exporter rules: reloaded at its next scrape') -%}{%- endif -%}
           {%- if 'jar' in kinds -%}{%- set _ = out.append('the exporter jar: loaded at the next start') -%}{%- endif -%}
           {%- if 'removed' in kinds -%}{%- set _ = out.append('the exporter files removed: the running Cassandra keeps the ones it opened until its next restart') -%}{%- endif -%}
-          {{ (out if _jmx or _exporter else []) + (_no_effect if _then == 'none' else [])
+          {{ out + (_no_effect if _then == 'none' else [])
              + ([_header_added] if _header and _then == 'none' else [])
              + ([_medusa_live] if _medusa and _then == 'none' else [])
              + ([_extras_live] if _extras and _then == 'none' else []) }}
@@ -799,6 +799,10 @@
         _newer: "{{ cassandra_config_newer_files | default([]) | reject('in', _as_started) | reject('in', _same) | list }}"
         _perms: "{{ _cassandra_config_perm_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | map('basename') | list }}"
         _dirs: "{{ _cassandra_config_dir_changes | default([]) | map(attribute='item') | map('regex_replace', ' [(].*$', '') | list }}"
+        # why an owner, group or mode change alone restarts nothing: jmxremote.password's at each JMX login
+        _perms_why: >-
+          {{ 'jmxremote.password (owner, group or mode): read at each JMX login'
+             if _perms | unique == ['jmxremote.password'] and not _dirs else 'an owner, group or mode: read at start' }}
         _running: "{{ _cassandra_preflight_running | default(true) | bool or cassandra_jvm.pid is defined }}"
         # the files to write proven to change nothing for the running Cassandra: [the reasons] (none: a restart)
         _jvm_read: "{{ dict(cassandra_apply_config_jvm_read.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1)) }}"
@@ -959,8 +963,10 @@
       ansible.builtin.fail:
         msg: >-
           {{ inventory_hostname }}: Cassandra runs (pid {{ cassandra_jvm.pid }}) outside its cassandra unit (not in
-          its control group). The restart its config needs would start a
-          second Cassandra next to it. Nothing was changed. {{ _outside_way_out }}
+          its control group). The restart this run plans ({{ _why }}) would start a second Cassandra next to it.
+          Nothing was changed. {{ _outside_way_out }}
+      vars:
+        _why: "{{ cassandra_apply_config_restart_why | default('') or 'its config' }}"
       when:
         - cassandra_apply_config_then == 'restart'
         - cassandra_apply_config_jvm_outside.stdout | default('') | length > 0

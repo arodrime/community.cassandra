@@ -688,7 +688,16 @@ def test_each_node_says_its_own_reason_for_no_restart():
               "kept_running": ["the exporter rules: reloaded at its next scrape"]},
              {"name": "node3", "todo": True, "then": "none"},
              {"name": "node4", "todo": True, "then": "restart"}]
-    nodes = [dict(n, done=True) for n in nodes]  # (the --check recap: each one's run as checked)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import SAME_JVM_ARGUMENTS
+    # (round 9) a proof with other reasons: all of them said under --check too; an OS-only node its own
+    nodes += [{"name": "node5", "todo": True, "then": "none",
+               "kept_running": [SAME_JVM_ARGUMENTS, "the exporter jar: loaded at the next start"]},
+              {"name": "node6", "todo": True, "then": "none",
+               "kept_running": [SAME_JVM_ARGUMENTS, "jmxremote.password: read at each JMX login"]},
+              {"name": "node7", "todo": True, "then": "none",
+               "kept_running": ["an owner, group or mode: read at start", SAME_JVM_ARGUMENTS]},
+              {"name": "node8", "todo": False, "os": True, "then": "none"}]
+    nodes = [dict(n, done=True, os_done=True) for n in nodes]  # (the --check recap: each one's run as checked)
     for lines in (cassandra_apply_config_happens(nodes, width=200),
                   cassandra_apply_config_recap(nodes, check=True, diff=["WOULD CHANGE", "x"], width=200)):
         said = [" ".join(line.split()) for line in lines]
@@ -699,6 +708,11 @@ def test_each_node_says_its_own_reason_for_no_restart():
         assert [line for line in said if line.startswith("node3 ") and "keeps what it read until its next restart"
                 in line], said
         assert not [line for line in said if line.startswith(("node1", "node2")) and "keeps what it read" in line]
+        text = " ".join(said)
+        assert "(%s; the exporter jar: loaded at the next start)" % SAME_JVM_ARGUMENTS in text, said
+        assert "(%s; jmxremote.password: read at each JMX login)" % SAME_JVM_ARGUMENTS in text, said
+        assert "(an owner, group or mode: read at start; %s)" % SAME_JVM_ARGUMENTS in text, said
+        assert [line for line in said if line.startswith("node8 ") and "OS settings, live" in line], said
 
 
 def test_what_happens_fits_79_columns_on_a_wide_terminal(monkeypatch):

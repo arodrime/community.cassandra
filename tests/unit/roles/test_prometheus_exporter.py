@@ -1005,3 +1005,21 @@ def test_an_agent_in_a_file_the_java_does_not_read_is_not_a_second_one(java, wro
     agent = "-javaagent:/opt/old/jmx_prometheus_javaagent-0.20.0.jar=9404:/opt/old/old.yml"
     out = refused(cassandra_jvm11_extra_options=[agent], **java)
     assert bool([w for w in out if "the JVM would load two" in w]) is wrong, out
+
+
+def test_an_owner_or_mode_alone_says_why_no_restart():
+    # (audit round 9) an owner, group or mode change: its reason, with no JMX or exporter change too; on
+    # jmxremote.password alone, read at each JMX login
+    variables = {"_cassandra_config_changes": [], "_cassandra_config_exporter_changes": [],
+                 "cassandra_config_restart_pending": False, "cassandra_config_newer_files": [],
+                 "_cassandra_preflight_running": True, "cassandra_jvm": {}, "_cassandra_config_dir_notes": [],
+                 "cassandra_apply_config_unit": {"skipped": True}}
+    facts = NOTE["ansible.builtin.set_fact"]
+    for items, said in ((["/etc/cassandra/conf/cassandra.yaml (owner:group mode)"], "an owner, group or mode: read at start"),
+                        (["/etc/cassandra/jmxremote.password (owner:group mode)"],
+                         "jmxremote.password (owner, group or mode): read at each JMX login")):
+        given = dict(variables, _cassandra_config_perm_changes=[{"item": i} for i in items])
+        for name, value in (NOTE.get("vars") or {}).items():
+            given[name] = render(value, given) if isinstance(value, str) else value
+        assert render(facts["cassandra_apply_config_then"], given) == "none"
+        assert render(facts["cassandra_apply_config_kept_running"], given) == [said]

@@ -189,12 +189,19 @@ def test_the_warning_of_a_diff_file_not_written():
     path = "/srv/ansible/inventories/production-cluster-eu/reports/prod-eu/apply_config-check-2026-11-25-120000.diff"
     for error in ("There was an issue creating /srv/ansible/inventories/production-cluster-eu/reports/prod-eu as"
                   " requested: [Errno 20] Not a directory: b'/srv/ansible/inventories/production-cluster-eu/reports'",
-                  "Task failed: Module failed: [Errno 20] Not a directory: b'/srv/ansible/inventories/x'"):
+                  "Task failed: Module failed: [Errno 20] Not a directory: b'/srv/ansible/inventories/x'",
+                  "[Errno 13] Permission denied: b'%s'" % path, "Destination directory %s does not exist"
+                  % path.rsplit("/", 1)[0], "Unable to make b'/tmp/tmpxyz' into to %s, failed final rename from"
+                  " b'/srv/ansible/inventories/production-cluster-eu/reports/prod-eu/.ansible_tmpabc': [Errno 13]"
+                  " Permission denied" % path):
         lines = cassandra_apply_config_diff_warning(error, path)
         head = "WARNING  the files' diffs of this run were not written: "
         assert lines[0].startswith(head)
         at = next(i for i, line in enumerate(lines) if line.startswith("  the file:"))
-        assert " ".join(line.strip() for line in lines[:at])[len(head):] == error  # (the error whole, as observed)
+        # (the error whole, as observed: its paths cut after a /, round 9)
+        assert "".join("".join(line.split()) for line in lines[:at])[len("".join(head.split())):] == \
+            "".join(error.split())
+        assert all(len(line) <= 79 for line in lines), lines
         at = next(i for i, line in enumerate(lines) if line.startswith("  the file:"))
         assert "".join(line.strip() for line in lines[at:-1]) == "the file:" + path
         assert all(len(line) <= 79 for line in lines[at:]) and lines[-1] == \
