@@ -127,3 +127,41 @@ def test_the_files_staged_are_the_ones_the_template_task_writes():
                                    "_cassandra_config_kept": ["logback.xml"]}) == ["cassandra.yaml"]
     template = next(t for t in _tasks("roles", "cassandra_config", "tasks", "apply.yml") if t.get("name") == "Template Cassandra config files")
     assert template["when"] == ["cassandra_config_file not in _cassandra_config_kept", "cassandra_config_file in _cassandra_config_write"]
+
+
+def test_a_staged_file_changed_stops_with_what_was_seen_and_a_resume(tmp_path):
+    """A staged file edited by hand before its node's turn: nothing moved; the stop says so (not "config write
+    started"), the live files untouched, and the resume that stages the files again."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_stop_block
+    (tmp_path / "cassandra.yaml").write_text("concurrent_writes: 24\n")
+    staged = {"cassandra.yaml": _stage(tmp_path, "cassandra.yaml", "concurrent_writes: 8\n")}
+    with open(tmp_path / ".cassandra.yaml.ansible-next", "a") as f:
+        f.write("# a line added by hand\n")
+    moved = _move(tmp_path, staged)
+    tasks = _tasks("roles", "cassandra_config", "tasks", "staged.yml")
+    move = next(t for t in tasks if t["name"] == "Put the staged config files in place")
+    result = {"rc": moved.returncode, "stderr": moved.stderr}
+    variables = dict(move["vars"], cassandra_config_staged_moved=result)
+    assert render_as_given("{{ %s }}" % move["failed_when"], variables) is False  # said by the stop below, not as Ansible's error
+    assert render_as_given("{{ %s }}" % move["changed_when"], variables) is False
+    note = next(t for t in tasks if t["name"] == "Note that nothing moved")
+    assert note["ansible.builtin.set_fact"] == {"_cassandra_op_stage": "during", "_cassandra_stop_word": "staged file changed"}
+    stop = next(t for t in tasks if t["name"] == "Stop, a staged file is not as this run staged it")
+    msg = render_as_given(stop["ansible.builtin.fail"]["msg"],
+                          dict(stop["vars"], cassandra_config_staged_moved=result, inventory_hostname="n2"))
+    results = [{"node": "n1", "result": "apply_config done in 38s", "stage": "after"},
+               {"node": "n2", "result": "apply_config FAILED after 2s: staged file changed", "stage": "during"},
+               {"node": "n3", "result": "not run yet"}]
+    block = cassandra_stop_block(results, "n2", msg, operation="apply_config", action="apply_config",
+                                 cluster="test_cluster", progress_file="inv/.cassandra_progress/x.done", inventory=["inv.yml"],
+                                 cwd="/x")
+    text = "\n".join(block)
+    assert block[0] == "STOPPED  apply_config  test_cluster  at n2"
+    assert block[1:3] == ["  Why:  staged file not as staged: cassandra.yaml (another content)",
+                          "        nothing moved: live config files untouched, Cassandra not restarted"]
+    assert "  n2  config not written; staged file changed" in block
+    assert "write started" not in text and "1. fix it" not in text
+    assert "  1. make config changes in the inventory: a resume stages the files again from" in block
+    assert "  2. resume:" in block and "-e cassandra_rolling_resume=true" in text
+    assert all(len(line) <= 79 for line in block), block
+    assert (tmp_path / "cassandra.yaml").read_text() == "concurrent_writes: 24\n"

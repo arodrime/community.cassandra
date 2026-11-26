@@ -17,8 +17,10 @@
       - "{{ cassandra_config_staged | to_json }}"
       - "{{ cassandra_config_backup | bool | string }}"
   register: cassandra_config_staged_moved
-  changed_when: true
+  changed_when: cassandra_config_staged_moved.rc == 0
+  failed_when: cassandra_config_staged_moved.rc != 0 and _not_as_staged not in cassandra_config_staged_moved.stderr
   vars:
+    _not_as_staged: "staged file not as staged, nothing moved: "  # (its stop below)
     _move: |
       import hashlib, json, os, shutil, sys, time
       conf, staged, backup = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3] == "True"
@@ -41,6 +43,24 @@
               shutil.copy2(live, "%s.%s.%s" % (live, os.getpid(), time.strftime("%Y-%m-%d@%H:%M:%S~", time.localtime())))
           os.rename(os.path.join(conf, "." + name + ".ansible-next"), os.path.join(conf, name))
       print(json.dumps(sorted(staged)))
+
+# a staged file another content or missing: nothing moved, the node left as it was (apply_config's stop: its row
+# says its config not written, the cause and the way out from this msg)
+- name: Note that nothing moved
+  ansible.builtin.set_fact:
+    _cassandra_op_stage: during
+    _cassandra_stop_word: staged file changed
+  when: cassandra_config_staged_moved.rc != 0
+
+- name: Stop, a staged file is not as this run staged it
+  ansible.builtin.fail:
+    msg: |-
+      staged file not as staged: {{ (cassandra_config_staged_moved.stderr | trim).split(_not_as_staged) | last }}
+      nothing moved: live config files untouched, Cassandra not restarted
+      WAY OUT  make config changes in the inventory: a resume stages the files again from it (what a staged file holds is replaced), then resume
+  when: cassandra_config_staged_moved.rc != 0
+  vars:
+    _not_as_staged: "staged file not as staged, nothing moved: "
 
 - name: Report
   ansible.builtin.include_role:
