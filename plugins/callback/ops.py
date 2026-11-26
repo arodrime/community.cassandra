@@ -517,6 +517,7 @@ def lines(msg):
 Step = namedtuple("Step", "phase tint start")
 STEP_WIDTH = 79  # the most of a step's line
 STEP_DRAW_EVERY = 0.2  # seconds between two rewrites of a step's line on a terminal
+_ANSIBLE_ERRORS = ("[ERROR]", "ERROR!")  # an error Ansible prints itself (Display.error: "User interrupted execution")
 
 
 def step_line(phase, tasks, seconds, width=STEP_WIDTH):
@@ -790,7 +791,11 @@ class CallbackModule(DefaultCallback):
                     text = str(msg)
                     self._blank, self._ruled, self._live = not text.rstrip("\n").rsplit("\n", 1)[-1].strip(), "", None
                     self._hold = not text.endswith("\n") and not kwargs.get("newline", len(args) <= 4 or args[4])
-                    self._draw(force=True)
+                    if kwargs.get("stderr", len(args) > 1 and args[1]) and text.lstrip().startswith(_ANSIBLE_ERRORS):
+                        self._step = None  # Ansible's own error (a Ctrl-C): the step's line never drawn again
+                        self._unhook()
+                    else:
+                        self._draw(force=True)
         over_the_step.own = display.__dict__.get("display")  # (an instance's own display: put back after)
         display.display = over_the_step
 

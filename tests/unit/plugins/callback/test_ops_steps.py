@@ -464,3 +464,35 @@ def test_a_step_under_a_second_on_a_terminal_leaves_the_log_file_as_a_pipe_has_i
     assert logged[:2] == [PHASE, "WARNING  a note"] and logged.count(PHASE) == 1
     assert not any(a == b == "" for a, b in zip(logged, logged[1:])), logged  # never two blank lines in a row
     assert screen(out.getvalue())[:5] == ["WARNING  a note", "", PHASE, "", "Checking the cluster from each node (3 nodes)..."]
+
+
+@pytest.mark.parametrize("error", ["[ERROR]: User interrupted execution", "\n[ERROR]: User interrupted execution",
+                                   "ERROR! User interrupted execution"])
+def test_a_step_stopped_by_ansible_own_error_leaves_its_line_out(error):
+    """Ctrl-C during a step: Ansible's own error (on stderr) is the last line, the step's line not drawn again
+    under it (the run would look still going on)."""
+    callback = step_callback(tty=True)
+    out = io.StringIO()
+    real, sys.stdout = sys.stdout, out
+    try:
+        callback._print(PHASE, step=True)
+        tasks(callback, "node1")
+        callback.now[0] += 8
+        tasks(callback, "node2")
+        callback._display.display(error, C.COLOR_ERROR, True)  # (positional, as Display.error's)
+        tasks(callback, "node3")  # a result still coming: nothing drawn
+    finally:
+        sys.stdout = real
+    rows = [row for row in screen(out.getvalue()) if row.strip()]
+    assert rows[-1].endswith("User interrupted execution"), rows
+    assert not any(re.search(r"task \d+  \d+s", row) for row in rows[-2:]), rows
+    assert callback._step is None and "display" not in callback._display.__dict__
+    # a warning on stderr is no error: the step goes on
+    callback = step_callback(tty=True)
+    real, sys.stdout = sys.stdout, io.StringIO()
+    try:
+        callback._print(PHASE, step=True)
+        callback._display.display("[WARNING]: something", C.COLOR_WARN, True)
+    finally:
+        sys.stdout = real
+    assert callback._step is not None
