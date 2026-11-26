@@ -159,3 +159,13 @@ def test_the_diff_file_named_in_79_columns_or_not_at_all(tmp_path):
         unnamed = changes(node, show_diff=show_diff)
         assert not [line for line in unnamed if "real diffs" in line or ".diff" in line], unnamed
     assert [line for line in changes(node, show_diff=True) if "more lines" in line][0].endswith("more lines not shown)")
+
+
+def test_the_diff_file_s_head_says_when_it_is_what_was_written(tmp_path):
+    # (audit round 6) written before the question: what the run writes if the answer is yes (apply_config says it
+    # written once confirmed); --check: what a real run would write
+    node = Node(tmp_path, "n1", files={"jvm-server.options": NODE_JVM})
+    assert cassandra_apply_config_diff_text([node.data()], "c").splitlines()[0] == \
+        "apply_config c: the files' diffs (what this run writes if you answer yes), secrets masked"
+    assert cassandra_apply_config_diff_text([node.data()], "c", check=True).splitlines()[0] == \
+        "apply_config --check c: the files' diffs (what a real run would write), secrets masked"

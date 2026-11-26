@@ -294,9 +294,10 @@ OUTSIDE = {"stdout": "not started by the cassandra unit (pid 4242 is not in its 
 def test_a_cassandra_its_unit_did_not_start_is_not_restarted(unit_running, jvm, cgroup, then, refused):
     # systemctl restart cassandra next to a JVM outside the unit's control group would start a second one
     t = task("Refuse to restart a Cassandra its unit did not start")
+    way_out = next(p for p in PLAYS if p["name"] == "Find what each node needs")["vars"]["_outside_way_out"]
     variables = {"cassandra_apply_config_then": then, "_cassandra_preflight_running": unit_running,
                  "cassandra_jvm": jvm, "cassandra_apply_config_jvm_outside": cgroup, "ansible_check_mode": False,
-                 "inventory_hostname": "node1"}
+                 "inventory_hostname": "node1", "_outside_way_out": way_out}
     assert all(render("{{ %s }}" % w, variables) for w in t["when"]) is refused
     assert not render("{{ %s }}" % "not ansible_check_mode", dict(variables, ansible_check_mode=True))  # (--check shows all)
     assert "not ansible_check_mode" in t["when"]
@@ -307,8 +308,13 @@ def test_a_cassandra_its_unit_did_not_start_is_not_restarted(unit_running, jvm, 
         assert msg.startswith("node1: Cassandra runs (pid 4242) outside its cassandra unit (not in its control group:")
         assert "would start a second Cassandra" in msg and "Nothing was changed." in msg
         assert msg.endswith("start it with its unit (systemctl start cassandra), then run apply_config again.")
-    # the plan (--check too) says it on the node
+    # the plan (--check too) says it on the node, with the same way out as the refusal (audit round 6)
     note = task("Note what this node needs")
+    if jvm:
+        warning = render(note["vars"]["_outside_warning"], dict(variables, _hand_started=True))
+        assert warning == ["WARNING  Cassandra runs (pid 4242) outside its cassandra unit (not in its control group): a"
+                           " real run refuses its restart (it would start a second Cassandra). " + way_out]
+    assert way_out.startswith("Stop that Cassandra (nodetool drain, then stop what started it)")
     hand = render(note["vars"]["_hand_started"], dict(variables, _then=then))
     assert hand is refused
 

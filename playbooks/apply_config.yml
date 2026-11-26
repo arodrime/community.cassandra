@@ -645,9 +645,7 @@
              + (['WARNING  ' ~ _keep_missing | join(', ') ~ ' kept by hand (cassandra_config_keep_files) '
                  ~ ('is' if _keep_missing | length == 1 else 'are') ~ ' missing: written back from the template, the hand'
                  ~ ' edits are lost. Restore your copy first to keep them.'] if _keep_missing else [])
-             + (['WARNING  Cassandra runs (pid ' ~ cassandra_jvm.pid ~ ') outside its cassandra unit (not in its control group): a real run'
-                 ' refuses its restart (it would start a second Cassandra)']
-                if _hand_started | default(false) | bool else [])
+             + _outside_warning
              + (['next restart: jemalloc loaded (installed now; no effect now)']
                 if _running | bool and _then != 'restart'
                    and _extras | default([]) | map(attribute='item') | select('match', 'package (libjemalloc2|jemalloc)$') | list
@@ -672,6 +670,11 @@
              + ([_medusa_live] if _medusa and _then == 'none' else [])
              + ([_extras_live] if _extras and _then == 'none' else []) }}
       vars:
+        # a Cassandra outside its unit whose config needs a restart: a real run refuses it, with this way out
+        _outside_warning: >-
+          {{ ['WARNING  Cassandra runs (pid ' ~ cassandra_jvm.pid ~ ') outside its cassandra unit (not in its control'
+              ~ ' group): a real run refuses its restart (it would start a second Cassandra). ' ~ _outside_way_out]
+             if _hand_started | default(false) | bool else [] }}
         _files: "{{ _cassandra_config_changes | default([]) }}"
         # the files left as they are that get the role's header line, nothing else: a comment, no restart for it
         # (cassandra_config_header: the file with it has the same settings; recorded as the running Cassandra's)
@@ -957,8 +960,7 @@
         msg: >-
           {{ inventory_hostname }}: Cassandra runs (pid {{ cassandra_jvm.pid }}) outside its cassandra unit (not in
           its control group: started by hand, or by a script of its own). The restart its config needs would start a
-          second Cassandra next to it. Nothing was changed. Stop that Cassandra (nodetool drain, then stop what
-          started it), start it with its unit (systemctl start cassandra), then run apply_config again.
+          second Cassandra next to it. Nothing was changed. {{ _outside_way_out }}
       when:
         - cassandra_apply_config_then == 'restart'
         - cassandra_apply_config_jvm_outside.stdout | default('') | length > 0
@@ -1260,6 +1262,60 @@
           {%- endfor -%}
           {{ out }}
 
+    # the files' diffs the plan names (on the controller, read by its user only), before its question: under --check
+    # what a real run would write, in a real run what it writes if the answer is yes (said "wrote" once confirmed)
+    - name: Write the files' diffs next to the report of the run
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false  # (a file on the controller, under --check too)
+      diff: false
+      when:
+        - cassandra_apply_config_diff_text | default('') | length > 0
+        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: drift reports
+      vars:
+        ansible_become: false
+      # (a failure ignored, not rescued: a run_once task's failure fails every node of the play on ansible-core
+      # 2.21, and failed_when: false hides its error there; a write that did not happen said, the run goes on)
+      block:
+        # (the first run of an inventory: no report written yet, its dir not there)
+        - name: Make the dir of the reports
+          ansible.builtin.file:
+            path: "{{ cassandra_apply_config_diff_path | dirname }}"
+            state: directory
+            mode: "0755"
+          register: _cassandra_apply_config_diff_dir
+          ignore_errors: true
+
+        - name: Write the diffs
+          ansible.builtin.copy:
+            content: "{{ cassandra_apply_config_diff_text }}\n"
+            dest: "{{ cassandra_apply_config_diff_path }}"
+            mode: "0600"
+          register: _cassandra_apply_config_diff_written
+          ignore_errors: true
+          no_log: true  # (masked, but the files' lines)
+          when: _cassandra_apply_config_diff_dir is not failed
+
+        - name: Say the diffs were not written
+          ansible.builtin.debug:
+            msg: >-
+              WARNING  the files' diffs of this run were not written ({{ cassandra_apply_config_diff_path }}):
+              {{ _error }}. cassandra_run_report_dir can name another dir.
+          when: _cassandra_apply_config_diff_dir is failed or _cassandra_apply_config_diff_written is failed
+          vars:
+            cassandra_output: true
+            # (the error observed: the dir's, else the file's)
+            _error: >-
+              {{ (_cassandra_apply_config_diff_dir if _cassandra_apply_config_diff_dir is failed
+                  else _cassandra_apply_config_diff_written).msg | default('no error said') }}
+
+        # (the view named a file that is not there: the one naming none instead)
+        - name: Name no diffs file in the view
+          ansible.builtin.set_fact:
+            cassandra_apply_config_diff: "{{ _cassandra_apply_config_diff_unnamed }}"
+          when: _cassandra_apply_config_diff_dir is failed or _cassandra_apply_config_diff_written is failed
+
     - name: Group the nodes to do
       ansible.builtin.group_by:
         key: "cassandra_apply_config_{{ cassandra_apply_config_todo | bool }}"
@@ -1446,61 +1502,33 @@
               {{ inventory_hostname }}: its JMX password file {{ _password[0].path }} could not be written (its directory,
               disk space?), nothing else was changed on it. The other nodes' password files may be written already
               (read at each login: no restart needed). Fix it, then run again.
-
-    # the files' diffs the summary names (on the controller, read by its user only): under --check, what a real
-    # run would write; in a real run, once confirmed (a run declined writes none)
-    - name: Write the files' diffs next to the report of the run
+    # (the run confirmed: the .diff file's head says what it wrote)
+    - name: Note the diffs as written
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_apply_config_diff_path }}"
+        regexp: "^apply_config .*: the files' diffs \\(what this run writes if you answer yes\\), secrets masked$"
+        line: "{{ cassandra_apply_config_diff_text.splitlines()[0] | replace('writes if you answer yes', 'wrote') }}"
+        mode: "0600"
       delegate_to: localhost
       run_once: true
       become: false
-      check_mode: false  # (a file on the controller, under --check too)
       diff: false
+      failed_when: false  # (the head only: the file is there or a WARNING said it was not)
       when:
-        - cassandra_apply_config_diff_text | default('') | length > 0
+        - not ansible_check_mode
+        - _cassandra_apply_config_diff_written.checksum is defined
         - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: drift reports
       vars:
         ansible_become: false
-      # (never a failed task: one of a run_once task fails every node of the play on ansible-core 2.21; a write
-      # that did not happen said, the run goes on)
-      block:
-        # (the first run of an inventory: no report written yet, its dir not there)
-        - name: Make the dir of the reports
-          ansible.builtin.file:
-            path: "{{ cassandra_apply_config_diff_path | dirname }}"
-            state: directory
-            mode: "0755"
-          register: _cassandra_apply_config_diff_dir
-          failed_when: false
-
-        - name: Write the diffs
-          ansible.builtin.copy:
-            content: "{{ cassandra_apply_config_diff_text }}\n"
-            dest: "{{ cassandra_apply_config_diff_path }}"
-            mode: "0600"
-          register: _cassandra_apply_config_diff_written
-          failed_when: false
-          no_log: true  # (masked, but the files' lines)
-          when: _cassandra_apply_config_diff_dir.state | default('') == 'directory'
-
-        - name: Say the diffs were not written
-          ansible.builtin.debug:
-            msg: >-
-              WARNING  the files' diffs of this run were not written ({{ cassandra_apply_config_diff_path }}): set
-              cassandra_run_report_dir to a dir you can write.
-          when: _cassandra_apply_config_diff_written.checksum is not defined
-          vars:
-            cassandra_output: true
-
-        # (the view named a file that is not there: the one naming none instead)
-        - name: Name no diffs file in the view
-          ansible.builtin.set_fact:
-            cassandra_apply_config_diff: "{{ _cassandra_apply_config_diff_unnamed }}"
-          when: _cassandra_apply_config_diff_written.checksum is not defined
   vars:
     # (from the groups the nodes to do are put in: each node's when reads them, no other node's variables)
     _os_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"
     _config_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"
     _todo: "{{ ansible_play_hosts | select('in', _config_nodes + _os_nodes) | list }}"
+    # the way out of a Cassandra outside its unit whose config needs a restart: the refusal and --check's WARNING
+    _outside_way_out: >-
+      Stop that Cassandra (nodetool drain, then stop what started it), start it with its unit (systemctl start
+      cassandra), then run apply_config again.
 
 - name: Set up the progress file
   hosts: "{{ query('community.cassandra.cassandra_nodes') | select('in', groups['cassandra_apply_config_True'] | default([])) | list }}"

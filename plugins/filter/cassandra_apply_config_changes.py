@@ -334,7 +334,8 @@ def cassandra_apply_config_diff_text(nodes, cluster="", check=False):
     if not text:
         return ""
     head = "apply_config%s %s: the files' diffs (%s), secrets masked" % (
-        " --check" if check else "", cluster, "what a real run would write" if check else "what the run writes")
+        " --check" if check else "", cluster, "what a real run would write" if check
+        else "what this run writes if you answer yes")
     return "\n".join([head, ""] + text)
 
 
