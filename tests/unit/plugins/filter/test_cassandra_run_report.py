@@ -131,10 +131,15 @@ def test_the_oldest_reports_past_the_kept_ones():
                                     "apply_config")[:5] == old + ["/r/apply_config-2026-11-05-1200.txt"]
     assert cassandra_run_report_old(files, "apply_config", keep=30) == []
     assert cassandra_run_report_old(files, "rolling_restart", keep=0) == ["/r/rolling_restart-2026-11-01-1200.txt"]
-    # (2026-11-25) apply_config's .diff files next to them: kept and removed the same way, apart from the reports
-    diffs = [{"path": "/r/apply_config-2026-11-%02d-120000.diff" % d, "mtime": 1000 + d} for d in range(1, 23)]
-    assert cassandra_run_report_old(files + diffs, "apply_config") == old + [
-        "/r/apply_config-2026-11-01-120000.diff", "/r/apply_config-2026-11-02-120000.diff"]
+    # (2026-11-25, audit round 7) apply_config's .diff files next to them: one goes with its report; one with no
+    # report (a run that stopped before writing it) goes once older than the oldest report kept
+    diffs = [{"path": "/r/apply_config-2026-11-%02d-1200.diff" % d, "mtime": 1000 + d} for d in range(1, 24)]
+    orphans = [{"path": "/r/apply_config-2026-11-%02d-1300.diff" % d, "mtime": 1000 + d} for d in (3, 7)]
+    assert cassandra_run_report_old(files + diffs + orphans, "apply_config") == old + [  # (the oldest first)
+        "/r/apply_config-2026-11-01-1200.diff", "/r/apply_config-2026-11-02-1200.diff",
+        "/r/apply_config-2026-11-03-1200.diff", "/r/apply_config-2026-11-03-1300.diff",
+        "/r/apply_config-2026-11-04-1200.diff"]
+    assert cassandra_run_report_old(diffs[:3], "apply_config") == []  # (no report kept: none removed)
 
 
 def run_report(tmp_path, check=False, report_dir=None, keep=None):

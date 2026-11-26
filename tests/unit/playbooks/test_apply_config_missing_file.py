@@ -316,9 +316,7 @@ def test_the_password_file_is_written_first_once_the_run_is_confirmed():
     # the checks before a node's turn log in with it (nodetool on the node itself); its failure stops the run
     names = [t.get("name") for t in FIND["tasks"]]
     first = FIND["tasks"][names.index("Write the JMX password file where it is missing or other")]
-    # (then the .diff file's head said as written: audit round 6)
-    assert names.index("Show the plan and confirm the run") + 1 == names.index(first["name"]) == len(names) - 2
-    assert names[-1] == "Note the diffs as written"
+    assert names.index("Show the plan and confirm the run") + 1 == names.index(first["name"]) == len(names) - 1
     assert first["any_errors_fatal"] is True
     write, noted = first["block"]
     # its error hidden (passwords): said, the run stopped

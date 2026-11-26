@@ -106,15 +106,23 @@ def cassandra_run_report_times(nodes, starts=None):
 
 def cassandra_run_report_old(files, operation, keep=KEEP):
     """files: the dir's files (ansible.builtin.find's: [{path, mtime}]); operation -> the paths of its reports
-    (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first; the same for the .diff files
-    next to them (apply_config's)."""
-    old = []
-    for ext in ("txt", "diff"):
-        mine = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.%s$" % (re.escape(str(operation)), ext))
-        reports = sorted((f for f in files or [] if mine.match(os.path.basename(str(f.get("path", ""))))),
-                         key=lambda f: (float(f.get("mtime") or 0), os.path.basename(str(f["path"]))))
-        old += [str(f["path"]) for f in reports[:max(len(reports) - int(keep), 0)]]
-    return old
+    (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first; then the .diff files next to
+    them (apply_config's) whose report goes, and the ones with no report (a run that stopped before writing it)
+    older than the oldest report kept."""
+    def mine(ext):
+        name = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.%s$" % (re.escape(str(operation)), ext))
+        return sorted((f for f in files or [] if name.match(os.path.basename(str(f.get("path", ""))))),
+                      key=lambda f: (float(f.get("mtime") or 0), os.path.basename(str(f["path"]))))
+
+    def stamp(f):
+        return os.path.splitext(os.path.basename(str(f["path"])))[0]
+    reports = mine("txt")
+    gone, kept = reports[:max(len(reports) - int(keep), 0)], reports[max(len(reports) - int(keep), 0):]
+    oldest = min([float(f.get("mtime") or 0) for f in kept] or [None]) if kept else None
+    reported, still = set(stamp(f) for f in reports), set(stamp(f) for f in kept)
+    diffs = [f for f in mine("diff") if stamp(f) not in still
+             and (stamp(f) in reported or (oldest is not None and float(f.get("mtime") or 0) < oldest))]
+    return [str(f["path"]) for f in gone] + [str(f["path"]) for f in diffs]
 
 
 class FilterModule(object):

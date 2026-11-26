@@ -1263,7 +1263,8 @@
           {{ out }}
 
     # the files' diffs the plan names (on the controller, read by its user only), before its question: under --check
-    # what a real run would write, in a real run what it writes if the answer is yes (said "wrote" once confirmed)
+    # what a real run would write, in a real run what it writes once the answer is yes (the report's NODES say what
+    # was applied)
     - name: Write the files' diffs next to the report of the run
       delegate_to: localhost
       run_once: true
@@ -1300,15 +1301,16 @@
         - name: Say the diffs were not written
           ansible.builtin.debug:
             msg: >-
-              WARNING  the files' diffs of this run were not written ({{ cassandra_apply_config_diff_path }}):
-              {{ _error }}. cassandra_run_report_dir can name another dir.
+              {{ ["WARNING  the files' diffs of this run were not written: " ~ _error, '  ' ~ cassandra_apply_config_diff_path,
+                  '  cassandra_run_report_dir can name another dir'] | community.cassandra.cassandra_fit }}
           when: _cassandra_apply_config_diff_dir is failed or _cassandra_apply_config_diff_written is failed
           vars:
             cassandra_output: true
-            # (the error observed: the dir's, else the file's)
+            # (the error observed: the dir's, else the file's; the paths in it left out, the file's said on its own line)
             _error: >-
               {{ (_cassandra_apply_config_diff_dir if _cassandra_apply_config_diff_dir is failed
-                  else _cassandra_apply_config_diff_written).msg | default('no error said') }}
+                  else _cassandra_apply_config_diff_written).msg | default('no error said')
+                 | regex_replace(":? b?'?/[^ ']+'?", '') }}
 
         # (the view named a file that is not there: the one naming none instead)
         - name: Name no diffs file in the view
@@ -1502,24 +1504,6 @@
               {{ inventory_hostname }}: its JMX password file {{ _password[0].path }} could not be written (its directory,
               disk space?), nothing else was changed on it. The other nodes' password files may be written already
               (read at each login: no restart needed). Fix it, then run again.
-    # (the run confirmed: the .diff file's head says what it wrote)
-    - name: Note the diffs as written
-      ansible.builtin.lineinfile:
-        path: "{{ cassandra_apply_config_diff_path }}"
-        regexp: "^apply_config .*: the files' diffs \\(what this run writes if you answer yes\\), secrets masked$"
-        line: "{{ cassandra_apply_config_diff_text.splitlines()[0] | replace('writes if you answer yes', 'wrote') }}"
-        mode: "0600"
-      delegate_to: localhost
-      run_once: true
-      become: false
-      diff: false
-      failed_when: false  # (the head only: the file is there or a WARNING said it was not)
-      when:
-        - not ansible_check_mode
-        - _cassandra_apply_config_diff_written.checksum is defined
-        - not _cassandra_apply_config_compare_only | default(false) | bool  # drift's compare: drift reports
-      vars:
-        ansible_become: false
   vars:
     # (from the groups the nodes to do are put in: each node's when reads them, no other node's variables)
     _os_nodes: "{{ ansible_play_hosts | select('in', groups['cassandra_apply_config_os_True'] | default([])) | list }}"

@@ -162,10 +162,10 @@ def test_the_diff_file_named_in_79_columns_or_not_at_all(tmp_path):
 
 
 def test_the_diff_file_s_head_says_when_it_is_what_was_written(tmp_path):
-    # (audit round 6) written before the question: what the run writes if the answer is yes (apply_config says it
-    # written once confirmed); --check: what a real run would write
+    # (audit rounds 6, 7) written before the question: what the run writes once the answer is yes (true answered or
+    # not; the report's NODES say what was applied); --check: what a real run would write
     node = Node(tmp_path, "n1", files={"jvm-server.options": NODE_JVM})
     assert cassandra_apply_config_diff_text([node.data()], "c").splitlines()[0] == \
-        "apply_config c: the files' diffs (what this run writes if you answer yes), secrets masked"
+        "apply_config c: the files' diffs (what this run writes once you answer yes), secrets masked"
     assert cassandra_apply_config_diff_text([node.data()], "c", check=True).splitlines()[0] == \
         "apply_config --check c: the files' diffs (what a real run would write), secrets masked"

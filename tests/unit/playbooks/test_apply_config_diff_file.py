@@ -55,6 +55,26 @@ def test_a_diff_file_not_written_is_said(tmp_path):
     # (audit rounds 2 and 3) the view names no file that is not there: the one rendered naming none
     assert 'VIEW [\\"WILL CHANGE\\", \\"  jvm-server.options  rewritten\\", \\"      (24 more lines not shown)\\"]' \
         in output, output
+    # (round 7) its lines in 79 columns, the path once, on its own line
+    said = output.split("TASK [Say the diffs were not written]")[1].split("TASK [")[0]
+    lines = [line.strip().rstrip(",")[1:-1] for line in said.split("\n")
+             if line.strip().startswith('"') and not line.strip().startswith('"msg"')]
+    assert lines[0].startswith("WARNING  the files' diffs of this run were not written: ") and str(path) not in lines[0]
+    assert "  " + str(path) in lines and said.count(str(path)) == 1, said
+    assert all(len(line) <= 79 for line in lines if str(path) not in line), lines
+
+
+@pytest.mark.playbook
+def test_a_diff_file_whose_place_is_a_dir_is_said(tmp_path):
+    # (audit round 7) the dir there, the file's place a directory: the write fails, said with its error, the view
+    # names no file
+    path = tmp_path / "reports" / "prod" / "apply_config-2026-11-25-120000.diff"
+    path.mkdir(parents=True)
+    rc, output = run(tmp_path, path)
+    assert rc == 0, output
+    assert "WARNING  the files' diffs of this run were not written" in output, output
+    assert 'VIEW [\\"WILL CHANGE\\", \\"  jvm-server.options  rewritten\\", \\"      (24 more lines not shown)\\"]' \
+        in output, output
 
 
 @pytest.mark.playbook
@@ -78,26 +98,12 @@ def test_a_diff_file_not_written_gives_every_node_the_view_naming_none(tmp_path)
         assert "VIEW %s WILL CHANGE|      (1 more line not shown)" % name in output, output
 
 
-@pytest.mark.playbook
-def test_the_diff_file_is_written_before_the_question_and_said_written_once_confirmed(tmp_path):
-    # (audit round 6) the plan names a file that is there: written before the question, its head "what this run
-    # writes if you answer yes" (a run declined keeps it so); once confirmed, "what this run wrote"; the report's plan
-    # reads the view after the write (the one naming no file when it failed)
+def test_the_diff_file_is_written_before_the_question():
+    # (audit rounds 6, 7) the plan names a file that is there: written before the question ("what this run writes
+    # once you answer yes": true answered or not, the report's NODES say what was applied), nothing rewritten after;
+    # the report's plan reads the view after the write (the one naming no file when it failed)
     names = [t.get("name") for t in FIND["tasks"]]
     write = names.index("Write the files' diffs next to the report of the run")
     plan, question = names.index("Keep the plan for the report of the run"), names.index("Show the plan and confirm the run")
     assert write < plan < question
-    assert names[-1] == "Note the diffs as written"
-    path = tmp_path / "apply_config-2026-11-26-120000.diff"
-    head = "apply_config c: the files' diffs (what this run writes if you answer yes), secrets masked"
-    path.write_text(head + "\n\n== x\n-a\n+b\n")
-    playbook = tmp_path / "play.yml"
-    playbook.write_text(yaml.safe_dump([{
-        "hosts": "localhost", "gather_facts": False,
-        "vars": {"cassandra_apply_config_diff_text": head + "\n\n== x\n-a\n+b", "cassandra_apply_config_diff_path":
-                 str(path), "_cassandra_apply_config_diff_written": {"checksum": "x"}},
-        "tasks": [find(FIND["tasks"], "Note the diffs as written")]}]))
-    args = ["-c", "local", "-i", "localhost,", "-e", "ansible_python_interpreter=" + sys.executable, playbook]
-    rc, output = run_playbook(args, dict(ANSIBLE_LOCALHOST_WARNING="0"), cwd=tmp_path)
-    assert rc == 0, output
-    assert path.read_text() == "apply_config c: the files' diffs (what this run wrote), secrets masked\n\n== x\n-a\n+b\n"
+    assert "Note the diffs as written" not in names
