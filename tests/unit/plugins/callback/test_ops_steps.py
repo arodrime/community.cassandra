@@ -102,12 +102,14 @@ def screen(raw):
 
 def test_the_lines_of_a_step():
     assert step_line(PHASE, 37, 72) == PHASE + "  task 37  1m12s"
-    assert step_done(PHASE, 252) == [PHASE + "  done in 4m12s"]
-    # 79 columns at most: the phase line cut while going on, the time under it once done
+    assert step_done(PHASE, 312, 252) == [PHASE + "  312 tasks  done in 4m12s"]
+    assert step_done(PHASE, 1, 2) == [PHASE + "  1 task  done in 2s"]
+    # 79 columns at most: the phase line cut while going on, the count and the time under it once done
     long = "Writing the config (node1, node3, node5, node7, node9, node11, node13, node15)..."
     assert step_line(long, 3, 3725) == "Writing the config (node1, node3, node5, node7, node9, node11...  task 3  1h02m"
     assert len(step_line(long, 300, 3725)) <= 79 and step_line(long, 3, 1, width=12) == "task 3  1s"
-    assert step_done(long, 61) == [long, "  done in 1m01s"]
+    assert step_done(long, 4, 61) == [long, "  4 tasks  done in 1m01s"]
+    assert all(len(line) <= 79 for line in step_done(PHASE[:-3] + " (node1, node2, node3)...", 2079, 3725))
 
 
 def test_a_step_on_a_terminal_rewritten_in_place_the_messages_above_it():
@@ -134,12 +136,12 @@ def test_a_step_on_a_terminal_rewritten_in_place_the_messages_above_it():
     finally:
         sys.stdout = real
     assert screen(out.getvalue()) == [
-        "WARNING  something", "         its way out", "", PHASE + "  done in 4m12s", "",
+        "WARNING  something", "         its way out", "", PHASE + "  3 tasks  done in 4m12s", "",
         "Checking the cluster from each node (3 nodes)...", ""]
     assert "display" not in callback._display.__dict__  # Ansible's display as it was
     # the log file (log_path) gets the lines printed and the step's start, not its line going on
     assert [line for line, color, log_only in callback._display.shown if line.strip()] == [
-        PHASE, "WARNING  something", "         its way out", PHASE + "  done in 4m12s", "Checking the cluster from each node (3 nodes)..."]
+        PHASE, "WARNING  something", "         its way out", PHASE + "  3 tasks  done in 4m12s", "Checking the cluster from each node (3 nodes)..."]
     assert [color for line, color, log_only in callback._display.shown if line.startswith(PHASE + "  ")] == ["cyan"]
 
 
@@ -159,7 +161,7 @@ def test_a_step_on_a_terminal_ansible_own_lines_above_it():
         sys.stdout = real
     rows = screen(out.getvalue())
     assert rows[:3] == ["[WARNING]: Collection community.general does not support Ansible version 2.16.19", "",
-                        PHASE + "  done in 1s"], rows
+                        PHASE + "  0 tasks  done in 1s"], rows
     assert "NOTHING TO DO  apply_config  prod" in rows
 
 
@@ -195,8 +197,8 @@ def test_a_step_without_a_terminal_its_line_then_one_every_five_minutes_then_don
     callback._print("CHECK  apply_config  prod  nothing to apply")
     shown = [line for line, color, log_only in callback._display.shown]
     assert shown[:11] == [PHASE, PHASE + "  task 4  5m00s", PHASE + "  task 9  10m00s", "", "WARNING  in between", "",
-                          PHASE + "  done in 12m00s", "", "Checking the cluster from each node (3 nodes)...",
-                          "Checking the cluster from each node (3 nodes)...  done in 5s", ""]
+                          PHASE + "  10 tasks  done in 12m00s", "", "Checking the cluster from each node (3 nodes)...",
+                          "Checking the cluster from each node (3 nodes)...  0 tasks  done in 5s", ""]
     assert LOG_EVERY == 300
 
 
@@ -227,7 +229,7 @@ def test_a_step_ends_with_its_play_or_its_run():
     callback.now[0] += 2
     callback.v2_playbook_on_play_start(Play())
     assert callback._step is None
-    assert callback._display.shown[-1][0] == PHASE + "  done in 2s"
+    assert callback._display.shown[-1][0] == PHASE + "  0 tasks  done in 2s"
 
     class Stats(object):
         failures, dark = {"node2": 1}, {}
@@ -306,8 +308,8 @@ def test_a_step_in_a_log(tmp_path):
     assert lines[:9] == ["Comparing the config with the inventory (2 nodes)...", "", "WARNING  a note", "",
                          lines[4], "", "Checking the cluster from each node (2 nodes)...",
                          lines[7], ""], output
-    assert re.match(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  done in \d+s$", lines[4]), output
-    assert re.match(r"Checking the cluster from each node \(2 nodes\)\.\.\.  done in \d+s$", lines[7]), output
+    assert re.match(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  \d+ tasks?  done in \d+s$", lines[4]), output
+    assert re.match(r"Checking the cluster from each node \(2 nodes\)\.\.\.  \d+ tasks?  done in \d+s$", lines[7]), output
 
 
 @pytest.mark.playbook
@@ -364,12 +366,12 @@ def test_a_step_on_a_terminal(tmp_path):
     assert re.search(r"Comparing the config with the inventory \(2 nodes\)\.\.\.  task \d+  \d+s", raw), raw  # going on
     rows = [row for row in screen(raw) if row.strip() and not row.startswith("====")]
     done = [row for row in rows if row.startswith("Comparing")]
-    assert len(done) == 1 and re.match(r"Comparing .*\.\.\.  done in \d+s$", done[0]), rows
+    assert len(done) == 1 and re.match(r"Comparing .*\.\.\.  \d+ tasks?  done in \d+s$", done[0]), rows
     assert rows.index(done[0]) == len(rows) - 2 and rows[-1].startswith("CHECK  "), rows
     assert not any(re.search(r"task \d+  \d+s", row) for row in rows), rows  # nothing left of the lines going on
     with open(str(tmp_path / "run.log"), encoding="utf-8") as f:
         log = f.read()
-    assert re.search(r"Comparing .*\.\.\.  done in \d+s", log) and not re.search(r"task \d+  \d+s", log), log
+    assert re.search(r"Comparing .*\.\.\.  \d+ tasks?  done in \d+s", log) and not re.search(r"task \d+  \d+s", log), log
 
 
 def test_a_step_on_a_terminal_a_line_left_open_a_worker_and_the_exit():

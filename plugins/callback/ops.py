@@ -529,10 +529,10 @@ def step_line(phase, tasks, seconds, width=STEP_WIDTH):
     return "%s...  %s" % (phase[:room].rstrip(), figures) if room >= 10 else figures[:width]
 
 
-def step_done(phase, seconds, width=STEP_WIDTH):
-    """The lines of a step done: its phase line and its time ("...  done in 4m12s"), the time on a line of its own
-    when both do not fit in width."""
-    said = "done in " + duration(seconds)
+def step_done(phase, tasks, seconds, width=STEP_WIDTH):
+    """The lines of a step done: its phase line, the tasks it has done and its time ("...  312 tasks  done in
+    4m50s"), the count and the time on a line of their own when they do not fit in width."""
+    said = "%d task%s  done in %s" % (tasks, "" if tasks == 1 else "s", duration(seconds))
     if len(phase) + 2 + len(said) <= width:
         return ["%s  %s" % (phase, said)]
     return [phase, "  " + said]
@@ -697,8 +697,8 @@ class CallbackModule(DefaultCallback):
             self._step_end(done=True)
 
     def _step_end(self, done):
-        """The step going on is over: done, its phase line with its time (step_done); else, or done in less than a
-        second, its phase line alone on a terminal (as without a step), nothing more in a log or a pipe."""
+        """The step going on is over: done, its phase line with its count and time (step_done); else, or done in less
+        than a second, its phase line alone on a terminal (as without a step), nothing more in a log or a pipe."""
         with self._lock:
             step, self._step = self._step, None
             if step is None:
@@ -719,7 +719,7 @@ class CallbackModule(DefaultCallback):
                 return
             if self._tty or not self._step_said:
                 self._line("")
-            for line in step_done(step.phase, seconds):
+            for line in step_done(step.phase, self._tasks, seconds):
                 self._line(line, color=step.tint)
             self._gap, self._step_said = True, False
 

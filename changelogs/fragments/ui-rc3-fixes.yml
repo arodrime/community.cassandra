@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - "ops callback - a step's last line keeps the count of its tasks (``Comparing the config with the inventory (24 nodes)...  312 tasks  done in 4m50s``)."
