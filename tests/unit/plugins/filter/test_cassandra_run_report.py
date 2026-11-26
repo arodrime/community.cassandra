@@ -184,7 +184,8 @@ def test_run_report_writes_the_report_and_keeps_the_last_ones(tmp_path):
     assert report.is_file(), output
     text = report.read_text()
     assert text.startswith("apply_config  Orders  DONE\n  made by:  community.cassandra ") and "\nRECAP\nDONE  apply_config\n" in text
-    assert "Report: %s" % report in output
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_path_lines
+    assert "\\n".join(cassandra_path_lines(str(report))) in output or "\n".join(cassandra_path_lines(str(report))) in output
     assert report.stat().st_mode & 0o777 == 0o600  # (it may name a node's secrets' places: its owner only)
     # 20 kept: the oldest one removed, the other operation's left
     assert not (reports / "apply_config-2026-10-01-1200.txt").exists()

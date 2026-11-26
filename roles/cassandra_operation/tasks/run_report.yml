@@ -62,9 +62,10 @@
 
     - name: Say where the report is
       ansible.builtin.debug:
-        msg: "Report: {{ _path }}"
+        msg: "{{ _path | community.cassandra.cassandra_path_lines | join(_nl) }}"  # (79 columns: the path under it)
       vars:
         cassandra_output: true  # an operator message (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
   rescue:
     - name: Say the report was not written
       ansible.builtin.debug:

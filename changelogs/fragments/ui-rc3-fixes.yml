@@ -5,3 +5,6 @@ minor_changes:
 - "Operation playbooks - a ``cassandra_*`` variable the collection does not know is a warning block of its own: probably a typo, the nodes it is set for, the closest known variable (also for a comment pasted into the key, ``cassandra_# Logging (logback.xml)log_console``) and that this one keeps its default meanwhile."
 - "apply_config playbook - a staged config file found changed at its node's turn stops with what was seen (nothing moved, the live files untouched, Cassandra not restarted, ``config not written`` on its row) and the resume that stages the files again, no longer ``config write started, not finished``."
 - "drift playbook - refused on a node Ansible does not reach, it also gives ``-e drift_nodes=false`` (the inventory alone, no node contacted) as a way out."
+- "Operation playbooks - the recap at the end of a run repeats a variable the collection does not know (one WARNING line, said mid-run in full), with the ``grep -RnF`` that finds the key in the inventory."
+- "Operation playbooks - the stop after a ``no`` (or no yes or no after 3 answers) names the operation and the cluster, and gives the command to run it again."
+- "Operation playbooks - the ``Report:`` line of a run puts a long path on the next line, within 79 columns."

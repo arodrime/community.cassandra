@@ -404,3 +404,17 @@ def test_the_checks_notes_said_on_their_own_fit_79_columns():
         tasks = [t for p in yaml.safe_load(f) for t in p.get("tasks", [])]
     said = next(t for t in tasks if t.get("name") == "Say the checks' notes")
     assert "cassandra_notes_lines" in said["ansible.builtin.debug"]["msg"]
+
+
+def test_a_long_report_path_goes_under_its_label():
+    """(2026-11-26, rig screens) "Report: /long/path" went over 79 columns: the path under the label, cut after a /."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_path_lines
+    assert cassandra_path_lines("/x/reports/test_cluster/apply_config-1.txt") == [
+        "Report: /x/reports/test_cluster/apply_config-1.txt"]
+    long = "/home/user/rig/reports/test_cluster/apply_config-check-2026-11-26-232927.txt"  # (77 columns)
+    lines = cassandra_path_lines(long)
+    assert lines == ["Report:", "  " + long] and len(lines[1]) <= 79
+    longer = "/home/user/work/a-much-longer-project-name/e2e/a-rig/reports/test_cluster/apply_config-check-1.txt"
+    lines = cassandra_path_lines(longer)
+    assert lines[0] == "Report:" and "".join(line.strip() for line in lines[1:]) == longer
+    assert all(len(line) <= 79 for line in lines) and lines[2].startswith("    ")

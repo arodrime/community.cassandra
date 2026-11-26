@@ -199,6 +199,22 @@ def cassandra_warnings(warnings, width=None):
     return out.fit(out.warning_lines(texts), width or STOP_WIDTH) if texts else []
 
 
+def cassandra_path_lines(path, label="Report:", width=None):
+    """A label and a path (a report, absolute) in width columns (default 79): on one line when it fits, else the
+    label alone and the path under it, indented 2, cut after a / when it does not fit a line alone (indented 4)
+    -> [line]. Example: "/a/b.txt" -> ["Report: /a/b.txt"]."""
+    width, path = width or STOP_WIDTH, str(path)
+    if len(label) + 1 + len(path) <= width:
+        return ["%s %s" % (label, path)]
+    lines, line = [label], "  "
+    for part in re.findall(r"[^/]*/|[^/]+$", path):
+        if len(line) + len(part) > width and line.strip():
+            lines.append(line)
+            line = "    "
+        line += part
+    return lines + [line]
+
+
 def cassandra_notes_lines(notes, width=None):
     """The checks' notes said on their own (note.yml's _cassandra_notes: no plan to hold them), width columns at most
     (default 79): a WARNING note's next lines under its text, as in a plan, a note of several lines set apart by a
@@ -513,4 +529,5 @@ class FilterModule(object):
             "cassandra_limits_changed": cassandra_limits_changed,
             "cassandra_warnings": cassandra_warnings,
             "cassandra_notes_lines": cassandra_notes_lines,
+            "cassandra_path_lines": cassandra_path_lines,
         }
