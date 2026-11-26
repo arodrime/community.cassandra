@@ -15,7 +15,7 @@ from ansible_collections.community.cassandra.plugins.filter.cassandra_import imp
     cassandra_inventory_files, cassandra_inventory_layout)
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_common import IPV4
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import (
-    _carry, setting_kind, cassandra_import_convergence)
+    KINDS, _carry, setting_kind, then_text, cassandra_import_convergence)
 from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import cassandra_import_report
 from ansible_collections.community.cassandra.tests.unit.helpers import golden_lines
 
@@ -169,6 +169,12 @@ def test_the_restart_kinds():
     assert setting_kind("cassandra_package_version") == "release" and setting_kind("cassandra_java_version") == "java"
     assert setting_kind("cassandra_dsbulk_version") == "tool" and setting_kind("cassandra_medusa_version") == "tool"
     assert setting_kind("cassandra_medusa_extra_settings") == "unknown"
+    # rig: logback.xml alone rewritten, apply_config did not restart (logback reads it again: scan="true")
+    assert setting_kind("cassandra_log_pattern") == "logback" and setting_kind("cassandra_log_jmx_configurator") == "logback"
+    assert then_text({"changing": ["db1"], "unread": "", "kind": "logback", "key": "cassandra_log_pattern",
+                      "unmanaged": []}).startswith("1 node changes, no restart")
+    # (apply_config restarts when the node's file does not scan, or was written since Cassandra started)
+    assert "without scan=\"true\", or written since Cassandra started: a restart" in KINDS["logback"][1]
 
 
 @pytest.mark.parametrize("name, line, carried", [

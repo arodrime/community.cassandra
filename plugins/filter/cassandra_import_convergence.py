@@ -71,6 +71,9 @@ KINDS = {"none": (0, THEN["none"][0], True),
          "timesync": (1, "then restart (apply_config starts time sync in the node's restart window, Cassandra"
                          " stopped, as a clock step must not happen under it)", True),
          "seeds": (1, "no restart (change_seeds applies it live)", True),
+         # apply_config's proof: logback reads logback.xml again (scan="true", the role's file and the node's)
+         "logback": (0, "no restart (logback reads logback.xml again; a node's file without scan=\"true\", or"
+                        " written since Cassandra started: a restart)", True),
          # apply_config's rule: jmxremote.password is read at each JMX login, jmxremote.access at start
          "jmx": (1, "then restart for a user or a right (jmxremote.access, read at start); passwords only: no restart"
                     " (jmxremote.password, read at each JMX login)", True),
@@ -93,7 +96,7 @@ KINDS = {"none": (0, THEN["none"][0], True),
 def setting_kind(key):
     """What apply_config does after writing key on a running node: none (an owner or mode), os (cassandra_linux's,
     live), restart (a config file), jmx (the JMX users: a restart unless only passwords change), keystore (a config
-    file naming a keystore), seeds (change_seeds' live reload),
+    file naming a keystore), seeds (change_seeds' live reload), logback (logback.xml only: read again by logback),
     login (the playbooks' own), move (where its data is), unknown (not its own)."""
     if key in PERMS:
         return "none"
@@ -123,7 +126,10 @@ def setting_kind(key):
         return "restart"
     if key in EXPORTER_LIVE:  # its rules reloaded at its next scrape; the same jar
         return "none"
-    if any(key in template_vars(name) for name in TEMPLATES):
+    files = [name for name in TEMPLATES if key in template_vars(name)]
+    if files == ["logback.xml"]:  # (no other file: apply_config's proof, logback.xml read again by logback)
+        return "logback"
+    if files:
         return "keystore" if re.search(r"keystore|truststore", key) else "restart"
     return "unknown"
 
