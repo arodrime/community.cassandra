@@ -339,10 +339,11 @@
           {%-   set hosts = [] -%}
           {%-   for h in _run if v in hostvars[h]._cassandra_preflight_unknown -%}{%- set _ = hosts.append(h) -%}{%- endfor -%}
           {%-   set close = hostvars[hosts | first]._cassandra_preflight_unknown[v] -%}
-          {%-   set _ = out.append('WARNING  ' ~ v ~ ' (set for ' ~ hosts | community.cassandra.cassandra_node_list(all_nodes=_run) ~ ') is not known to this'
-                                   ~ ' collection: its roles and playbooks do not read it' ~ ((' (did you mean ' ~ close ~ '?)') if close else '')) -%}
+          {%-   set _ = out.append(v | community.cassandra.cassandra_unknown_note(
+                                     close, hosts | community.cassandra.cassandra_node_list(all_nodes=_run),
+                                     close_set=close | length > 0 and close in hostvars[hosts | first])) -%}
           {%- endfor -%}
-          {{ out | join(_nl) }}
+          {{ out | join(_nl ~ _nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0
       run_once: true  # (its when reads every node: once, not on each node)
 

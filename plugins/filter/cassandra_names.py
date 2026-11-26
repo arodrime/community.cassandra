@@ -4,6 +4,7 @@
 variable of the playbooks (cassandra_host for cassandra_hosts).
 cassandra_unknown_names: the cassandra_* variables set that the collection
 does not know, each with the known variable it is close to (or "").
+cassandra_unknown_note: the warning of one of them.
 cassandra_renamed_names: the variables set under a former name, each with its
 name now.
 cassandra_unknown_extra_vars: the -e variables under a prefix of the collection
@@ -81,7 +82,7 @@ NOT_VARIABLES = frozenset((
     "cassandra_service_other_seeds", "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
     "cassandra_sysctl_todo",
     "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
-    "cassandra_topology_refusals", "cassandra_upgrade_copy_refusal",
+    "cassandra_topology_refusals", "cassandra_unknown_note", "cassandra_upgrade_copy_refusal",
     # other words: a file the roles read (plugin_utils/cassandra_config_record.py), a module a template's comment
     # names (cassandra_os.py)
     "cassandra_config_record", "cassandra_os"))
@@ -174,9 +175,35 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
         low = name.lower()  # CASSANDRA_HOSTS: cassandra_hosts
         match = ([RENAMED[low]] if low in RENAMED else [low] if low in documented
                  else ["cassandra_hosts"] if low == "cassandra_cluster"  # the CASSANDRA_CLUSTER environment variable
-                 else difflib.get_close_matches(low, documented, n=1, cutoff=cutoff))
+                 else difflib.get_close_matches(low, documented, n=1, cutoff=cutoff) or _pasted(low, documented))
         out[name] = match[0] if match else ""
     return out
+
+
+def _pasted(low, documented):
+    """A name with text pasted into it (a comment: "cassandra_# Logging (logback.xml)log_console"): the documented
+    variable its last word makes ("cassandra_log_console"), as a list; [] when none."""
+    tail = re.search(r"\W(\w+)$", low)
+    name = "cassandra_" + tail.group(1).lstrip("_") if tail else ""
+    return [name] if name in documented else []
+
+
+def cassandra_unknown_note(name, close="", where="", close_set=False):
+    """The warning of a variable no role or playbook knows (cassandra_unknown_names): a block of its own, one fact
+    per line, its lines under its first; close: the documented variable it is close to; where: the nodes it is set
+    for; close_set: close is set too (else it keeps its default).
+    Example: "cassandra_log_consol", "cassandra_log_console", "all 3 nodes" -> "WARNING  probably a typo in a
+    variable name, not known to this collection:", "         cassandra_log_consol", "         set for: all 3 nodes",
+    "         no role or playbook reads it", "         closest known variable: cassandra_log_console",
+    "         cassandra_log_console not set: its default applies meanwhile" (joined)."""
+    under = " " * 9
+    lines = ["WARNING  probably a typo in a variable name, not known to this collection:", under + name]
+    lines += [under + "set for: " + where] if where else []
+    lines.append(under + "no role or playbook reads it")
+    if close:
+        lines.append(under + "closest known variable: " + close)
+        lines.append(under + close + (" is set too" if close_set else " not set: its default applies meanwhile"))
+    return "\n".join(lines)
 
 
 def cassandra_renamed_names(names):
@@ -265,5 +292,5 @@ class FilterModule(object):
     def filters(self):
         return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names,
                 "cassandra_renamed_names": cassandra_renamed_names, "cassandra_unknown_extra_vars": cassandra_unknown_extra_vars,
-                "cassandra_former_name_text": cassandra_former_name_text,
+                "cassandra_former_name_text": cassandra_former_name_text, "cassandra_unknown_note": cassandra_unknown_note,
                 "cassandra_files_setting": cassandra_files_setting}

@@ -201,11 +201,11 @@ def cassandra_warnings(warnings, width=None):
 
 def cassandra_notes_lines(notes, width=None):
     """The checks' notes said on their own (note.yml's _cassandra_notes: no plan to hold them), width columns at most
-    (default 79): a WARNING note's next lines under its text, as in a plan; a command after a label ("then apply it
-    live: ansible-playbook ...") on a line of its own when too long, cut between its arguments; another note as
-    it is, wrapped."""
+    (default 79): a WARNING note's next lines under its text, as in a plan, a note of several lines set apart by a
+    blank line (a block of its own); a command after a label ("then apply it live: ansible-playbook ...") on a line
+    of its own when too long, cut between its arguments; another note as it is, wrapped."""
     width = width or STOP_WIDTH
-    lines = []
+    lines, spaced = [], False
     for note in notes or []:
         if out.is_warning(note):
             said = out.warning(str(note).split("\n"), under=True)
@@ -218,7 +218,10 @@ def cassandra_notes_lines(notes, width=None):
                     rest += [labelled.group(1) + labelled.group(2).rstrip(), labelled.group(1) + "  " + labelled.group(3)]
                 else:
                     rest.append(line)
-            lines += first + out.fit(rest, width)
+            several = "\n" in str(note).strip()
+            if lines and (several or spaced):
+                lines.append("")
+            lines, spaced = lines + first + out.fit(rest, width), several
         else:
             lines += out.fit(str(note).split("\n"), width)
     return lines

@@ -290,15 +290,28 @@ def test_preflight_notes_render_one_line_each():
                 "n2": {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}}
     t = found["Warn about them"]
     note = render(t["vars"]["_note"], _run=["n1", "n2"], hostvars=hostvars, _nl="\n")
+    # (2026-11-26) each one a block of its own, one fact per line: the close name, and that it keeps its default
     assert note.split("\n") == [
-        "WARNING  cassandra_sedes (set for n1, n2) is not known to this collection: its roles and playbooks do not read it"
-        " (did you mean cassandra_seeds?)",
-        "WARNING  cassandra_x (set for n1) is not known to this collection: its roles and playbooks do not read it"]
+        "WARNING  probably a typo in a variable name, not known to this collection:",
+        "         cassandra_sedes",
+        "         set for: n1, n2",
+        "         no role or playbook reads it",
+        "         closest known variable: cassandra_seeds",
+        "         cassandra_seeds not set: its default applies meanwhile",
+        "",
+        "WARNING  probably a typo in a variable name, not known to this collection:",
+        "         cassandra_x",
+        "         set for: n1",
+        "         no role or playbook reads it"]
+    hostvars["n1"]["cassandra_seeds"] = "10.0.0.1"
+    assert "         cassandra_seeds is set too" in render(t["vars"]["_note"], _run=["n1", "n2"], hostvars=hostvars,
+                                                          _nl="\n").split("\n")
+    del hostvars["n1"]["cassandra_seeds"]
     assert t["vars"]["_run"] == "{{ ansible_play_hosts }}"
     # (2026-11-25) every node of the run: "all N nodes" (3 or more), not their names
     hostvars["n3"] = {"_cassandra_preflight_unknown": {"cassandra_sedes": "cassandra_seeds"}}
     note = render(t["vars"]["_note"], _run=["n1", "n2", "n3"], hostvars=hostvars, _nl="\n")
-    assert note.split("\n")[0].startswith("WARNING  cassandra_sedes (set for all 3 nodes) is not known")
+    assert note.split("\n")[2] == "         set for: all 3 nodes"
     jvm = found["Warn about the JVM options"]
     assert jvm["vars"]["_run"] == "{{ ansible_play_hosts }}"
     run = ["node%02d" % i for i in range(1, 25)]

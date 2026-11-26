@@ -272,3 +272,22 @@ def test_the_guide_s_plan_is_the_screen_s():
                " unwatched; run it inside tmux or screen)")
     assert cassandra_screen(spec, session=session).split("\n") == shown[:-1]
     assert max(len(line) for line in shown) <= 79
+
+
+def test_a_note_of_several_lines_is_a_block_of_its_own():
+    """(2026-11-26) a typo in a variable name went unnoticed among the warnings: a note of several lines (the
+    unknown-variable warning) has a blank line above and under it; one-line warnings stay together."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_notes_lines
+    typo = ("WARNING  probably a typo in a variable name, not known to this collection:\n"
+            "cassandra_log_consol\nset for: all 3 nodes\nno role or playbook reads it")
+    notes = ["WARNING  n1: first", typo, "WARNING  n2: second", "WARNING  n3: third"]
+    screen = cassandra_screen({"operation": "apply_config", "summary": "test_cluster"}, notes=notes).split("\n")
+    at = screen.index("WARNING  probably a typo in a variable name, not known to this collection:")
+    assert screen[at - 2:at] == ["WARNING  n1: first", ""]
+    assert screen[at + 1:] == ["         - cassandra_log_consol", "         - set for: all 3 nodes",
+                               "         - no role or playbook reads it", "",
+                               "WARNING  n2: second", "WARNING  n3: third"]
+    lines = cassandra_notes_lines(notes)
+    assert lines == ["WARNING  n1: first", "", "WARNING  probably a typo in a variable name, not known to this collection:",
+                     "         cassandra_log_consol", "         set for: all 3 nodes",
+                     "         no role or playbook reads it", "", "WARNING  n2: second", "WARNING  n3: third"]

@@ -111,14 +111,16 @@ def _table_block(blocks, after):
 
 
 def _warnings(spec, session, notes, check):
-    """The warnings of the spec, the session's and the checks' notes (WARNING lines kept for the plan), each once;
-    under check, the ones that only concern a real run named on one line instead."""
+    """The warnings of the spec, the session's and the checks' notes (WARNING lines kept for the plan), each once, a
+    note of several lines set apart by a blank line (a block of its own); under check, the ones that only concern a
+    real run named on one line instead."""
     given = []
     for warning in spec.get("warnings") or []:  # each: one warning per text, under the same label
         given.extend([dict(warning, text=t) for t in warning["each"]] if "each" in warning else [warning])
     # a note of several lines: its first as the warning, the others as items under it
-    given += [{"label": "", "text": out.warning_text(n).split("\n") if "\n" in out.warning_text(n) else out.warning_text(n)}
-              for n in notes or [] if out.is_warning(n)]
+    # (a note of several lines: a block of its own, a blank line around it)
+    given += [{"label": "", "text": out.warning_text(n).split("\n"), "block": True} if "\n" in out.warning_text(n)
+              else {"label": "", "text": out.warning_text(n)} for n in notes or [] if out.is_warning(n)]
     if str(session or "").strip():
         given.append({"label": "", "text": session, "real_run": True})
     seen, kept = set(), []
@@ -127,14 +129,16 @@ def _warnings(spec, session, notes, check):
         if warning.get("text") and key not in seen:
             seen.add(key)
             kept.append(warning)
-    skipped, lines = [], []
+    skipped, lines, spaced = [], [], False
     for warning in kept:
         if check and warning.get("real_run"):
             name = warning.get("label") or str(warning["text"]).split(":", maxsplit=1)[0]
             if name not in skipped:
                 skipped.append(name)
             continue
-        lines += _warning(warning)
+        if lines and (warning.get("block") or spaced):
+            lines.append("")
+        lines, spaced = lines + _warning(warning), warning.get("block")
     if skipped:
         lines += ["(A real run would also warn about: %s.)" % ", ".join(str(s) for s in skipped)]
     return lines

@@ -243,3 +243,22 @@ def test_a_filter_added_since_rc1_is_no_variable():
 def test_a_filters_name_given_for_a_variable_is_refused_with_the_variable_close_to_it():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_extra_vars
     assert cassandra_unknown_extra_vars(["cassandra_seed_hosts"], []) == {"cassandra_seed_hosts": "cassandra_seeds"}
+
+
+def test_a_comment_pasted_into_a_key_names_the_variable_its_last_word_makes():
+    """(2026-11-26) "cassandra_# Logging (logback.xml)log_console": a comment pasted into the key; the run left
+    cassandra_log_console at its default. The warning names it, and says it keeps its default."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import (
+        cassandra_unknown_names, cassandra_unknown_note)
+    name = "cassandra_# Logging (logback.xml)log_console"
+    assert cassandra_unknown_names([name, "cassandra_# a note)frobnicate"], []) == {
+        name: "cassandra_log_console", "cassandra_# a note)frobnicate": ""}
+    note = cassandra_unknown_note(name, "cassandra_log_console", "all 3 nodes").split("\n")
+    assert note == ["WARNING  probably a typo in a variable name, not known to this collection:",
+                    "         cassandra_# Logging (logback.xml)log_console",
+                    "         set for: all 3 nodes",
+                    "         no role or playbook reads it",
+                    "         closest known variable: cassandra_log_console",
+                    "         cassandra_log_console not set: its default applies meanwhile"]
+    assert all(len(line) <= 79 for line in note)
+    assert cassandra_unknown_note("cassandra_x", "", "n1").split("\n")[-1] == "         no role or playbook reads it"
