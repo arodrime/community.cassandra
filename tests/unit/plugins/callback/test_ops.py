@@ -728,6 +728,26 @@ def test_colours_by_line_start():
     assert colour("NOTE  x", progress="bright blue") == "bright blue"
     assert colour(u"READY \u2014 nothing to change") == C.COLOR_OK
     assert colour("dc1 after:  6 nodes") is None and colour("  1.  add node5") is None
+    # drift's verdict block: in sync green, the nodes that differ from the inventory yellow
+    assert colour("IN SYNC") == C.COLOR_OK and colour("NOT IN SYNC  2 nodes differ from the inventory") == C.COLOR_CHANGED
+    assert colour("NOT ALL COMPARED  1 node not compared") == colour("NONE COMPARED  3 nodes not compared") == \
+        C.COLOR_CHANGED
+    assert colour(u"IN SYNC \u2014 the nodes against the inventory") is None  # (the report's heading)
+
+
+def test_the_drift_screen_has_its_blocks_between_rules():
+    """drift's screen: a heavy rule above its title, a light one between its blocks, a blank line inside a block (a
+    line of one space: out.PARAGRAPH) stays blank."""
+    from ansible_collections.community.cassandra.plugins.callback.ops import _HEADED
+
+    assert _HEADED.match("DRIFT  prod  24 nodes  in sync")
+    screen = ["DRIFT  prod  3 nodes  in sync", "  made by:  x", "", "IN SYNC", "  all 3 nodes match", "",
+              "BETWEEN NODES  1 setting differs", "  a  b", " ", "  3 nodes  db1..db3"]
+    callback = quiet_callback(tty=False)
+    callback._print(screen)
+    shown = [line for line, dummy, dummy2 in callback._display.shown]
+    assert [line[:1] for line in shown if re.match(r"^[-=]{4,}$", line)] == ["=", "-", "-"]
+    assert shown[shown.index("  a  b") + 1] == "" and shown[shown.index("  a  b") + 2] == "  3 nodes  db1..db3"
 
 
 def test_the_plan_title_and_the_stop_block_are_blocks_of_their_own():

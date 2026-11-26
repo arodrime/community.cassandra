@@ -76,10 +76,11 @@ OPERATIONS = [
                 " token allocator, versions, seeds."},
     {"name": "drift", "theme": "read-only", "guide": "Drift from stock",
      "summary": "How far the cluster is from stock: each setting the inventory gives a node another value than the"
-                " collection's default (where it is set, the edit back, whether apply_config restarts for it), the"
+                " collection's default (its cost, whether apply_config restarts for it, the grep that finds it), the"
                 " settings not the same on every node, and whether the nodes still match the inventory (apply_config's"
                 " compare, nothing changed).",
-     "options": [("-e drift_nodes=false", "inventory only, no node contacted", "true")],
+     "options": [("-e drift_nodes=false", "inventory only, no node contacted", "true"),
+                 ("-e drift_details=true", "every setting on the screen too", "false")],
      "example": ("the inventory alone", ["-e drift_nodes=false"])},
     {"name": "add_node", "theme": "nodes", "cql": "plan", "guide": "Adding a node",
      "summary": "Adds new hosts to the running cluster: all prepared at once, then each started and bootstrapped in"

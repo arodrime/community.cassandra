@@ -1,0 +1,30 @@
+minor_changes:
+  - >-
+    drift - the screen gives the verdict first (``DRIFT  <cluster>  <N> nodes  in sync``, or ``not in sync`` and the
+    NOT IN SYNC block with how many nodes differ from the inventory, each node and what differs), then WORTH A LOOK
+    (the findings of the settings checks), BETWEEN NODES as a table when the nodes split into a few groups (not all of
+    one node; else each setting then its values and their nodes), and OFF STOCK summed up (how
+    many settings, what going back to the default would do, by area), within 79 columns. Every setting with its values,
+    default, cost and grep stays in the report; ``-e drift_details=true`` shows them on the screen too, long values
+    cut.
+  - >-
+    health_check and import_cluster - one more check of the settings that weaken the cluster:
+    ``medusa_secrets_readable`` (Medusa on: ``cassandra_medusa_config_mode``, or ``cassandra_medusa_key_file_mode``
+    when the role writes a storage key file: S3 keys given and ``cassandra_medusa_key_file`` not empty, that lets
+    other users than the owner read ``medusa.ini`` or that file; octal, ``0o644`` or symbolic modes, in order). Its finding and ``jmx_passwords_readable``'s say "set to mode ... in the inventory" (the node's
+    file mode in import_cluster's report), and both read the same bits (group and others' read).
+  - >-
+    drift - BETWEEN NODES and a FIXES block compare each node's effective value (its own variable, or its own default
+    rendered for it): a setting is said only when the nodes get different values, "(default)" marks a value its
+    nodes all have as their own default, a version's newest first (``cassandra_package_version``'s default: the
+    release each node runs, never ranked). FIXES guides the hand edits that give every node one value: the values
+    with their nodes, a word of care (a data move, a cluster-wide switch, a version, a keystore, a value sized for
+    the machine), the ``grep -RnwE`` that finds where the ``-i`` sources and their ``group_vars`` and ``host_vars``
+    set them, then the review and ``apply_config --check --diff``. drift writes nothing and names no file: OFF STOCK
+    gives each setting's grep. A node the compare gave no result for is said so, with a way out; every node compared
+    in sync gives ``not all compared`` (``none compared`` when no node was).
+bugfixes:
+  - >-
+    import_cluster and drift - a setting written in ``logback.xml`` alone (``cassandra_log_pattern``...) said "then
+    restart"; ``apply_config`` does not restart for it when logback reads the node's file again (``scan="true"``,
+    as the role's file has it). They now say no restart, with that condition.

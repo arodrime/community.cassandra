@@ -1233,33 +1233,55 @@ far is it from stock, and are its nodes alike? It changes nothing, on the nodes 
    $ ansible-playbook -i inventory community.cassandra.drift
    $ ansible-playbook -i inventory community.cassandra.drift -e drift_nodes=false   # the inventory alone
 
-Its lines, on the screen and in ``reports/<cluster group>/drift-<YYYY-MM-DD-HHMMSS>.txt`` (next to the inventory's
-dir, as ``apply_config``'s reports; ``cassandra_run_report_dir`` gives another dir), come in three sections:
+The screen gives the verdict first (``DRIFT  prod  24 nodes  in sync``, ``not in sync``, ``not all compared``, ``none
+compared``) and sums each section up within 79 columns: IN SYNC (or NOT IN SYNC, NOT CHECKED with ``-e
+drift_nodes=false``, how many nodes differ from the inventory, each node with what differs), WORTH A LOOK (the
+findings of the settings checks, below), BETWEEN NODES (a table when the nodes split into a few groups, not all of one
+node, else each setting then its values and their nodes, ten settings at most) and OFF STOCK (how many settings, what
+going back to the default would do: restart the nodes, apply live, move data by hand, change a cluster switch, cost
+not known (an upgrade, a setting apply_config does not write); and their areas). Every line is in ``reports/<cluster
+group>/drift-<YYYY-MM-DD-HHMMSS>.txt`` (next to the inventory's dir, as ``apply_config``'s reports;
+``cassandra_run_report_dir`` gives another dir); ``-e drift_details=true`` shows them on the screen too, long values
+cut. They come in these sections:
 
-- **FROM STOCK**: every setting whose value on a node, as Ansible resolves the inventory for it, is not the
+- **OFF STOCK**: every setting whose value on a node, as Ansible resolves the inventory for it, is not the
   collection's default (a role default made of other variables resolved for each node, as ``import_cluster``
   resolves them: ``cassandra_data_file_directories`` from that node's ``cassandra_data_dir``; one made of the node's
-  facts is known only when the nodes are read). Each one with its values and nodes, the default, the files that set it
-  (``group_vars/<group>/...``, ``host_vars/<node>/...``, a hosts file; none: ``-e`` or another source), the exact edit
-  back (``remove cassandra_concurrent_reads from group_vars/prod/main.yml``; for a dict, its key in it; a file read by
-  other clusters too, such as ``group_vars/all.yml``, with the way to leave them as they are) and what it costs, in
-  ``import_cluster``'s convergence words (``then restart``, ``no restart (cassandra_linux, applied live)``, an upgrade,
-  a data move) with the ``apply_config --check --diff`` that shows it. The settings per node by nature (the cluster's
+  facts is known only when the nodes are read). Each one with its values and nodes, the default, what going back
+  costs, in ``import_cluster``'s convergence words (``then restart``, ``no restart (cassandra_linux, applied live)``,
+  an upgrade, a data move) with the ``apply_config --check --diff`` that shows it, and the ``grep -Rnw`` that finds
+  where the inventory's files set it. The settings per node by nature (the cluster's
   name, the addresses, dc and rack) are listed apart, and so are the variables that are not node settings (the
   playbooks' logins, the options of the runs). The files kept as edited by hand (``cassandra_config_keep_files``, which
   ``import_keep_hand_edits`` sets) come last: Ansible does not manage them, their settings are the file's on the node.
 - **BETWEEN NODES**: the settings not the same on every node, as ``import_cluster``'s convergence says them (a node
-  without the variable has the default): each value with its nodes, then what gives every node the value most of them
-  have, what it costs and its check.
+  without the variable has its own default, rendered for that node: a setting is said only when the nodes get
+  different values; "(default)" marks a value every node of it has as its own default; a version's newest first,
+  ``cassandra_package_version``'s default being the release each node runs): each value with its nodes, what giving
+  every node one value costs and its check.
 - **IN SYNC**: whether the nodes still match the inventory, from ``apply_config``'s own compare (the one a real run
   does before its plan, read only: no question, no stop, nothing written): ``in sync``, or each node with what differs
   (its config files, OS settings, Medusa, packages, Java, its unit) and whether ``apply_config`` would restart it, then
   the ``apply_config --check --diff`` command that shows the values. A change that is a procedure of its own (an
   upgrade, a host to add or remove) is said with its command. ``-e drift_nodes=false`` leaves this section out: the
   inventory alone, no node contacted.
+- **WORTH A LOOK**: the settings that could weaken the cluster, as ``health_check``'s SETTINGS TO REVIEW and the
+  ``import_cluster`` report find them (the checks: Taking over an existing cluster), each with what to do and how to
+  keep it on purpose.
 
-Secrets are never shown (``****``). The run reads the inventory's vars files to tell where a setting is set (a vaulted
-one with the run's vault password; one it cannot read is named).
+The screen's FIXES block is a guide to the hand edits that give every node one value of each setting that differs:
+its values as Ansible gives them to the nodes, each with its nodes (the newest first for a version, which a node
+never goes down), a word of care (a data move, a cluster-wide switch, a version, a keystore, a value sized for the
+machine), then the ``grep -RnwE`` that finds where the inventory's files set them (``-e``, vars plugins and
+vaulted files and inventory plugins or scripts are not seen), and how to check the edits (``git
+diff`` in a git repository, then ``apply_config --check --diff``). drift writes nothing and names no file anywhere:
+which file gives a node its value is Ansible's precedence. Five settings on the screen at most; all of them in the
+report. A node the compare gave no result for is said "not compared", with the way out; when every node compared
+is in sync, the verdict is ``not all compared`` (``none compared`` when no node was).
+
+Secrets are never shown (``****``). drift reads the values Ansible gives each node, not the inventory's files: the
+``grep`` reads the ``-i`` sources and the ``group_vars`` and ``host_vars`` next to a source file (not seen: ``-e``,
+vars plugins, inventory plugins or scripts, vaulted files; a host list given to ``-i`` has no file).
 
 
 Restricted networks (air-gapped)
@@ -1670,7 +1692,9 @@ setting ``apply_config`` writes shows in its differences table, as any other cha
 - ``batch_size_fail_threshold`` over 1MiB (Cassandra's default: 50KiB) or ``native_transport_max_frame_size`` over
   64MiB (default: 16MiB): requests that big held in a node's memory (``large_sizes``);
 - ``jmxremote.password`` readable by other users than its owner, its mode in ``cassandra_config_file_permissions``
-  (``jmx_passwords_readable``).
+  (``jmx_passwords_readable``);
+- ``medusa.ini`` or Medusa's storage key file readable by other users than its owner, ``cassandra_medusa_config_mode``
+  or ``cassandra_medusa_key_file_mode`` (``medusa_secrets_readable``).
 
 A node that keeps one on purpose lists its id in ``cassandra_settings_kept_on_purpose`` (``host_vars`` or a group), e.g.
 ``cassandra_settings_kept_on_purpose: [heap_size]``; each finding says so, and an id no check has gets a line of its own.
@@ -2230,7 +2254,8 @@ it (in ``group_vars/<cluster group>/``, removed from the ``group_vars`` and ``ho
 of yours such as ``group_vars/all``, which the other clusters of the directory read too (one below the cluster
 group is named); a sub-key of a dict set in the
 files that keep another value of it), how many nodes would change and what follows (``no restart`` for an owner,
-group or mode and for the OS settings of ``cassandra_linux``, ``then restart`` for a config file, ``restart unknown``
+group or mode, for the OS settings of ``cassandra_linux`` and for a setting of ``logback.xml`` alone (logback reads
+the file again), ``then restart`` for another config file, ``restart unknown``
 for what ``apply_config`` does not write; a cluster-wide switch (encryption, authentication) with its procedure first, a keystore or truststore checked on the
 node first, a version only upgraded to the newest (``upgrade``, ``update_java``), a login of the
 playbooks (``cassandra_jmx_password``...) which the nodes must accept first, a heap sized for the machine, a data

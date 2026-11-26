@@ -1,0 +1,50 @@
+DRIFT  uat  24 nodes  in sync
+  made by:  community.cassandra 3.0.0-rc3
+
+IN SYNC
+  all 24 nodes match the inventory: apply_config has nothing to apply
+
+WORTH A LOOK
+  batch_size_fail_threshold 6400KiB on all (24 nodes) (Cassandra's default:
+    50KiB): a batch this big is accepted, and a big batch weighs on the memory
+    of the node that coordinates it
+  medusa.ini is set to mode 0644 in the inventory for all (24 nodes): users
+    other than their owner can read Medusa's secrets
+  what to do for each: WORTH A LOOK in the report
+
+BETWEEN NODES  3 settings differ
+                                  17 nodes               7 nodes
+  cassandra_log_audit_compress    false                  true (default)
+  cassandra_log_jmx_configurator  true                   false (default)
+  cassandra_log_pattern           %-5level [%thread] %…  %-5level [… (default)
+ 
+  17 nodes  db01..db17
+   7 nodes  db18..db24
+
+FIXES  by hand: to give every node one value, edit where the inventory sets it
+  cassandra_log_audit_compress
+    false on 17 nodes: db01..db17
+    true (default) on 7 nodes: db18..db24
+  cassandra_log_jmx_configurator
+    true on 17 nodes: db01..db17
+    false (default) on 7 nodes: db18..db24
+  cassandra_log_pattern
+    %-5level [%thread] %date{ISO8601} %F:%L… on 17 nodes: db01..db17
+    %-5level [%thread] %date{"yyy… (default) on 7 nodes: db18..db24
+  where: grep -RnwE 'cassandra_log_audit_compress|cassandra_log_jmx_configurator|cassandra_log_pattern' inventories/prod.yml
+    (not seen: -e, vars plugins, inventory plugins or scripts, vaulted files)
+  then: review the edits (git diff in a git repository), then
+    ansible-playbook -i inventories/prod.yml community.cassandra.apply_config --check --diff
+
+OFF STOCK  135 settings not at the collection's default
+  going back to the default would:
+    restart the nodes         60
+    apply live                67
+    move data by hand          4   commitlog_dir, data_dir, hints_dir, saved_c…
+    change a cluster switch    4   authenticator, authorizer, cidr_authorizer_…
+  by area:
+    cassandra.yaml   44    Medusa           27    Linux            24
+    logging           8    systemd           6    JVM               5
+    install           5    other            16
+  each one with its values, default, cost and grep: in the report
+  (on this screen too: -e drift_details=true)

@@ -51,6 +51,7 @@ _COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
 #   Jinja called that Python calls now, and cassandra_jmx_ssl_, a prefix rc1 wrote)
 RC1_NAMES_NOW_IN_PYTHON = frozenset((
     "cassandra_apply_config_down_ok", "cassandra_apply_config_outcomes", "cassandra_clock_lines",
+    "cassandra_drift_dirs", "cassandra_drift_paths", "cassandra_drift_shared",
     "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
     "cassandra_prometheus_config_error", "cassandra_storage_mode_back_stop", "cassandra_storage_mode_given_wrong",
     "cassandra_storage_mode_into_none_stop", "cassandra_storage_mode_jump_stop", "cassandra_storage_mode_kept_stop",
@@ -72,7 +73,8 @@ NOT_VARIABLES = frozenset((
     "cassandra_cleanup_batches", "cassandra_clock_plan", "cassandra_config_audit_parameter_refusals",
     "cassandra_config_exporter_refusals", "cassandra_config_jmx_tls_refusals", "cassandra_config_logback_refusals",
     "cassandra_config_override_refusals", "cassandra_config_rackdc_refusals", "cassandra_config_snippet_refusals",
-    "cassandra_cql_login_outcome", "cassandra_dead_address", "cassandra_dead_node_refusal", "cassandra_import_cql_todo",
+    "cassandra_cql_login_outcome", "cassandra_dead_address", "cassandra_dead_node_refusal",
+    "cassandra_drift_screen", "cassandra_drift_verdict", "cassandra_import_cql_todo",
     "cassandra_import_cqlsh_todo", "cassandra_installed_packages", "cassandra_inventory_file_heads",
     "cassandra_node_reset_dir_lines", "cassandra_node_reset_lines", "cassandra_package_query", "cassandra_rack_infos",
     "cassandra_seed_hold_lines", "cassandra_seed_hosts", "cassandra_service_account_refusal", "cassandra_service_changes",

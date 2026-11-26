@@ -2,7 +2,7 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 # The drift playbook. -e drift_nodes=false: run by ansible-playbook on a neutral inventory whose nodes can't be reached
-# (192.0.2.0/24, TEST-NET-1): the inventory alone renders FROM STOCK and BETWEEN NODES, secrets masked, and writes
+# (192.0.2.0/24, TEST-NET-1): the inventory alone renders OFF STOCK and BETWEEN NODES, secrets masked, and writes
 # its report. Its node part is apply_config's compare (import_playbook, _cassandra_apply_config_compare_only): every
 # stop, write and question of a real run is off there, and the compare's facts are summed up as IN SYNC (the
 # expressions read from the playbooks, rendered by Ansible with neutral data).
@@ -91,15 +91,26 @@ def test_inventory_alone_renders_and_writes_its_report(tmp_path):
     rc, output = run(tmp_path, "-e", "drift_nodes=false")
     assert rc == 0, output
     assert "UNREACHABLE" not in output and "Preflight" not in output  # no node contacted
-    assert "DRIFT  prod  " in output
-    for line in ["  cassandra_concurrent_reads   64 on all (3 nodes)",
-                 "      default: 32; set in group_vars/prod/main.yml",
-                 u"      → remove cassandra_concurrent_reads from group_vars/prod/main.yml",
-                 "  cassandra_heap_size   8G on db1, db2 (2 nodes); 16G on db3 (1 node)",
-                 "      default: \"\"; set in group_vars/prod/main.yml, prod.yml",
-                 "  logback.xml   kept on db1 (1 node)",
-                 u"IN SYNC — not checked (-e drift_nodes=false: the inventory alone, no node contacted)"]:
-        assert line in output.splitlines(), (line, output)
+    # the screen: the verdict first, each section summed up (every setting in the report)
+    shown = output.splitlines()
+    for line in ["DRIFT  prod  3 nodes  not checked",
+                 "NOT CHECKED  the nodes", "  -e drift_nodes=false: the inventory alone, no node contacted",
+                 "BETWEEN NODES  2 settings differ",
+                 "  cassandra_heap_size", "    8G  on db1, db2 (2 nodes)", "    16G  on db3 (1 node)",
+                 "OFF STOCK  7 settings not at the collection's default",
+                 "    move data by hand          1   data_dir",
+                 "  kept by hand (cassandra_config_keep_files): logback.xml on db1 (1 node)"]:
+        assert line in shown, (line, output)
+    assert max(len(line) for line in shown[shown.index("DRIFT  prod  3 nodes  not checked"):]
+               if not line.startswith("Report: ") and "ansible-playbook " not in line and "grep -Rnw" not in line) <= 79, \
+        output  # (a command whole)
+    # each setting's lines: in the report, and on the screen with -e drift_details=true
+    details = ["  cassandra_concurrent_reads   64 on all (3 nodes)", "      default: 32",
+               "      where: grep -Rnw cassandra_concurrent_reads %s %s %s" % tuple(
+                   tmp_path / "inventories" / p for p in ("prod.yml", "group_vars", "host_vars")),
+               "  cassandra_heap_size   8G on db1, db2 (2 nodes); 16G on db3 (1 node)", "      default: \"\"",
+               "  logback.xml   kept on db1 (1 node)"]
+    assert not set(details) & set(shown), output
     # cassandra_hints_dir resolves to its default: not off stock
     assert "cassandra_hints_dir" not in output
     assert SECRET not in output
@@ -107,10 +118,18 @@ def test_inventory_alone_renders_and_writes_its_report(tmp_path):
     assert len(reports) == 1, output
     with open(reports[0], encoding="utf-8") as f:
         report = f.read()
-    assert report.startswith("drift  prod  ")
+    assert report.startswith("drift  prod  7 settings off stock, 2 differ between nodes, 1 file kept by hand, nodes not"
+                             " checked\n"), report
     assert "  run:      read only, nothing was changed (-e drift_nodes=false: no node contacted)\n" in report
-    assert "\nFROM STOCK" in report and "\nBETWEEN NODES" in report and "\nIN SYNC" in report
+    assert "\nOFF STOCK" in report and "\nBETWEEN NODES" in report and "\nNOT CHECKED" in report
+    for line in details + [u"NOT CHECKED — the nodes (-e drift_nodes=false: the inventory alone, no node contacted)"]:
+        assert line in report.splitlines(), (line, report)
     assert SECRET not in report
+    rc, output = run(tmp_path, "-e", "drift_nodes=false", "-e", "drift_details=true")
+    assert rc == 0, output
+    for line in details + ["OFF STOCK %s the settings not at the collection's default" % u"\u2014"]:
+        assert line in output.splitlines(), (line, output)
+    assert not any(line.startswith("OFF STOCK  ") for line in output.splitlines())  # (the summary)
     # an unknown drift_ option is refused, as the collection's others
     rc, output = run(tmp_path, "-e", "drift_node=false")
     assert rc != 0 and "-e drift_node: not a variable of this collection" in output, output
@@ -188,7 +207,7 @@ def test_the_compare_summed_up_in_sync():
     # the head: how many nodes are not in sync (the OS-only one too)
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 2, "between": 0, "kept": 1}}))
-    assert verdict == "2 settings off stock, nodes alike, 1 file kept by hand, 2 nodes not in sync"
+    assert verdict == "2 settings off stock, nodes alike, 1 file kept by hand, 2 nodes differ from the inventory"
     alike = dict((n, {"cassandra_apply_config_todo": False, "_cassandra_apply_config_stops": []}) for n in HOSTVARS)
     verdict = render(play["vars"]["_verdict"], dict(variables, hostvars=alike, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 0, "between": 1, "kept": 0}}))
@@ -205,8 +224,10 @@ def test_a_node_the_compare_did_not_reach_is_not_in_sync():
     variables = dict(trusted(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2", "db3"])
     sync = render(play["vars"]["_sync"], variables)
     assert [(n["name"], n["compared"]) for n in sync] == [("db1", False), ("db2", True), ("db3", True)]
-    assert cassandra_drift_sync(sync, [], "CMD")[1:] == [
-        "  db1  not compared (the compare gave nothing for it)", "  db2, db3  in sync"]
+    # (audit A6: what was observed only, and the way out; every node compared in sync: "not all compared")
+    assert cassandra_drift_sync(sync, [], "CMD", screen=True) == [
+        "NOT ALL COMPARED  1 node not compared", "  db1  not compared: the compare gave no result for it",
+        "  db2, db3  in sync", "  WAY OUT  run drift again, then look at the run's output above for it"]
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
     assert verdict == "at stock, nodes alike, 1 node not compared"
@@ -233,7 +254,7 @@ def test_a_stop_ends_the_compare_and_is_said_not_in_sync():
         "  apply_config would stop before any change (a procedure of its own first):", "    " + stops[0]]
     verdict = render(play["vars"]["_verdict"], dict(variables, _compared=True,
                                                     _cassandra_drift_report={"counts": {"stock": 0, "between": 0, "kept": 0}}))
-    assert verdict == "at stock, nodes alike, not in sync, 2 nodes not compared"
+    assert verdict == "at stock, nodes alike, apply_config would stop before any change, 2 nodes not compared"
 
 
 def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others():
@@ -247,3 +268,33 @@ def test_in_sync_names_a_unit_that_differs_and_its_command_reads_as_the_others()
                         "cassandra_service_dropin_compare": {"changed": True}}}
     sync = render(play["vars"]["_sync"], dict(trusted(play["vars"]), hostvars=hostvars, _nodes=["db1", "db2"]))
     assert [n["unit"] for n in sync] == [["cassandra.service"], ["zz-ansible-environment.conf"]]
+
+
+# --- FIXES: the hand edits, nothing written ----------------------------------------------------------------------
+
+FIX_VARS = {"host_vars/db1/main.yml": "# db1, by hand\ncassandra_concurrent_compactors: 4\n",
+            "host_vars/db2/main.yml": "cassandra_concurrent_compactors: 4\n"}
+
+
+@pytest.mark.playbook
+def test_fixes_names_the_files_to_edit_and_writes_none(tmp_path):
+    inv = inventory(tmp_path)
+    (inv / "host_vars" / "db1" / "main.yml").unlink()
+    for path, text in FIX_VARS.items():
+        (inv / path).parent.mkdir(parents=True, exist_ok=True)
+        (inv / path).write_text(text)
+    before = dict((p, (inv / p).read_text()) for p in FIX_VARS)
+    rc, output = run(tmp_path, "-e", "drift_nodes=false")
+    assert rc == 0, output
+    shown = output.splitlines()
+    at = shown.index("FIXES  by hand: to give every node one value, edit where the inventory sets it")
+    assert shown[at + 1:at + 4] == ["  cassandra_concurrent_compactors", "    4 on db1, db2",
+                                    "    '' (default) on db3"], output
+    grep = next(line for line in shown[at:] if "grep -RnwE" in line)
+    assert grep.endswith(" %s %s %s" % tuple(tmp_path / "inventories" / p for p in ("prod.yml", "group_vars", "host_vars"))) \
+        and "cassandra_concurrent_compactors" in grep, output
+    assert "  then: review the edits (git diff in a git repository), then" in shown[at:], output
+    assert all(len(line) <= 79 for line in shown[at:at + 7] if "grep" not in line), output
+    assert dict((p, (inv / p).read_text()) for p in FIX_VARS) == before
+    with open(os.path.join(TOP, "playbooks", "drift.yml"), encoding="utf-8") as f:
+        assert "ansible.builtin.copy" not in f.read()  # (no file of the inventory written: the edits are yours)

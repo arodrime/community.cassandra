@@ -98,8 +98,8 @@ _cassandra_playbook_variables: [cassandra_hosts, cassandra_target_nodes, cassand
                                 import_carry_exporter_config, import_report_shareable, import_adopt, import_strict,
                                 import_debug,
                                 help_topic, help_write, help_runbook_dir, help_inventory,
-                                # drift's option (its header)
-                                drift_nodes]
+                                # drift's options (its header)
+                                drift_nodes, drift_details]
 
 # storage_mode_read.yml's CQL read: the node's own address (its rpc_address, else its listen_address, else
 # 127.0.0.1: several instances on a host each their own), TLS when client encryption is required

@@ -203,7 +203,9 @@ _COLOURS = (
     (re.compile(r"ALL \d+ NODES? UP \u2014 "), "COLOR_CHANGED"),
     (re.compile(r"ALL \d+ NODES? UP$"), "COLOR_OK"),
     (re.compile(r"CHECK\b.*\bwould\b"), "COLOR_CHANGED"),  # something left to do
-    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\b(PASSED|nothing to act on)\b"), "COLOR_OK"),
+    (re.compile(r"(NOT IN SYNC|NOT ALL COMPARED|NONE COMPARED)  "), "COLOR_CHANGED"),  # (drift's: not all in sync)
+    (re.compile(r"(DONE|HEALTHY|NOTHING TO DO|READY|CHECK)\b|IMPORT \S+ .*\b(PASSED|nothing to act on)\b|IN SYNC$"),
+     "COLOR_OK"),
     (re.compile(r"NOTE\b|\[\d+/\d+\] |%s|%s" % (_PHASE.pattern, _BANNER.pattern)), "PROGRESS"),
     (_WAIT, "PROGRESS"),
 )
@@ -234,8 +236,9 @@ PROGRESS_COLOR = "cyan"  # the progress, phase and NOTE lines (option progress_c
 _OPERATIONS = ("add_node", "replace_node", "decommission_node", "remove_dead_node", "reset_node", "move_node", "stop_rack",
                "start_rack", "change_seeds", "apply_config", "update_java", "sync_clocks", "add_datacenter",
                "remove_datacenter", "create_cluster", "upgrade", "cleanup", "topology", "rolling_restart", "rolling_reboot")
-# - the other first words of a plan or a screen ("REFUSED  topology ..."; import_cluster's "IMPORT prod ..." apart);
-_SCREEN_HEADS = ("PLAN", "REFUSED", "READY", "NOTHING TO DO")
+# - the other first words of a plan or a screen ("REFUSED  topology ..."; import_cluster's "IMPORT prod ..." apart;
+#   drift's "DRIFT  prod  24 nodes  in sync");
+_SCREEN_HEADS = ("PLAN", "REFUSED", "READY", "NOTHING TO DO", "DRIFT")
 # - the first words of a recap, a stop block's too ("STOPPED  rolling_restart  prod  at node2", "WAY OUT  ...").
 _RECAP_HEADS = ("DONE", "FAILED", "STOPPED", "CHECK", "HEALTHY", "NOT HEALTHY", "NOTHING TO DO", "WAY OUT")
 # a plan or a screen (its first line): a heavy rule above it
