@@ -291,13 +291,17 @@ def _diff_lines(name, names, every, by_name, diff_file, width):
 
 def _naming(words, path, width):
     """The lines of words then a path (a .diff file), in width: the path on the next line when it does not fit
-    there, cut after a / when it does not fit a line alone (indented 2 more) -> [line]."""
+    there, cut after a / when it does not fit a line alone (indented 2 more), a name longer than a line cut where
+    the line ends -> [line]."""
     head = words[0]
     if len(head) + 1 + len(path) <= width:
         return [head + " " + path]
     indent = " " * (len(head) - len(head.lstrip()) + 2)
+    room = max(10, width - len(indent))
+    # (a part longer than a line alone: cut where the line ends)
+    parts = [p[i:i + room] for p in re.findall(r"[^/]*/|[^/]+$", path) for i in range(0, len(p), room)]
     lines, line = [head], indent
-    for part in re.findall(r"[^/]*/|[^/]+$", path):
+    for part in parts:
         if len(line) + len(part) > width and line.strip():
             lines.append(line)
             line = indent

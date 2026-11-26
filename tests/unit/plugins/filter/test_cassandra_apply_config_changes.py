@@ -145,6 +145,13 @@ def test_the_diff_file_named_in_79_columns_or_not_at_all(tmp_path):
     long_jvm = JVM + "".join("-Dx%d=%d\n" % (i, i) for i in range(DIFF_LINES))
     node = Node(tmp_path, "n1", files={"jvm-server.options": long_jvm})
     path = "/srv/ansible/inventories/production-cluster-eu/reports/prod-eu/apply_config-check-2026-11-25-120000.diff"
+    # (round 4) a dir name longer than a line alone: cut too
+    long_dir = "/srv/" + "a-very-long-directory-name-" * 4 + "/apply_config-2026-11-25-120000.diff"
+    for path in (path, long_dir):
+        for show_diff in (False, True):
+            lines = changes(node, show_diff=show_diff, diff_file=path)
+            assert [line for line in lines if len(line) > 79] == [], lines
+            assert "".join(line.strip() for line in lines).count(path) == 1, lines
     for show_diff in (False, True):
         lines = changes(node, show_diff=show_diff, diff_file=path)
         assert [line for line in lines if len(line) > 79] == [], lines
