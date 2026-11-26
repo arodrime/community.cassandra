@@ -1185,8 +1185,7 @@ def cassandra_import_cqlsh_todo(nodes, hostvars, keep_hand_edits=False):
                     " path> in group_vars (the playbooks run it as root: a file only root can write)",
                     "no other cqlsh: " + keep_again + "run {command:create}, then the same without --check --diff: on a"
                     " running cluster it installs what is missing (a Python cqlsh runs with, the cqlshlib of the package"
-                    " linked into it) and writes what differs from the inventory, and starts or restarts no node that"
-                    " runs"],
+                    " linked into it) and writes what differs from the inventory (its --check --diff above shows it)"],
             "then": "as root on those nodes, cassandra_cqlsh_command with --version starts; the next import has no such"
                     " step"})
     if quoting:
@@ -1892,11 +1891,12 @@ WRITES_DIFFS = "REWRITES OF THE NEXT APPLY_CONFIG"
 def _writes(report, self_check):
     """What the next apply_config writes on the nodes read with no effect on the values (the self-check's writes: the
     files it creates or rewrites, the ones it adds its header line to), the same on several nodes once ->
-    [(file, what, why, [node])], the header lines last."""
+    [(file, what, why, [node])]: the files rewritten or created, the header lines, then the unit."""
     found = {}
     for name in report.names:
         for w in ((self_check or {}).get(name) or {}).get("writes") or []:
-            found.setdefault((w["what"] in ("header", "unit"), w["file"], w["what"], tuple(w["why"])), []).append(name)
+            order = {"header": 1, "unit": 2}.get(w["what"], 0)  # (the files written, the header lines, the unit last)
+            found.setdefault((order, w["file"], w["what"], tuple(w["why"])), []).append(name)
     return [(f, what, list(why), members) for (dummy, f, what, why), members in sorted(found.items())]
 
 
@@ -2093,7 +2093,7 @@ REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 # the nodes read the next step's check names (--limit), when some were not read
 LIMIT_READ = 10
 # what the files listed under "the next apply_config" leave out: apply_config --check shows them
-NOT_LISTED = "Medusa, packages, the JMX users"
+NOT_LISTED = "Medusa, packages, the JMX users, the unit's changes since Cassandra started"
 
 
 def _apply_config_expects(writes, rewrites, unread=False):

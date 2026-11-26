@@ -1402,8 +1402,8 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
     assert ("expected: WOULD CHANGE: the 1 config file listed above, and the rewrites under APPLY_CONFIG WILL REWRITE"
-            " (no effect) (Medusa, packages, the JMX users: not listed, apply_config --check shows them); whether a node"
-            " restarts: apply_config --check says it (WHAT HAPPENS) ansible-playbook") in steps
+            " (no effect) (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed,"
+            " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS) ansible-playbook") in steps
 
 
 def test_parts_kept_said_in_one_sentence():
@@ -1560,8 +1560,8 @@ def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
                            "      rewrites 1 other item with no effect"]
     said = " ".join(" ".join(line.split()) for line in lines)
     assert "expected: WOULD CHANGE: the 5 config files listed above, and the rewrites under APPLY_CONFIG WILL REWRITE" \
-        " (no effect) (Medusa, packages, the JMX users: not listed, apply_config --check shows them); whether a node" \
-        " restarts: apply_config --check says it (WHAT HAPPENS)" in said, said
+        " (no effect) (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
+        " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" in said, said
     # the diffs in the details, once per group of nodes with the same one
     details = report([node(i) for i in range(1, 4)], self_check=checks, details=True)
     at = details.index("REWRITES OF THE NEXT APPLY_CONFIG  (their diffs)")
@@ -1724,7 +1724,7 @@ def test_the_head_says_what_is_written_never_a_restart():
         "                             rejects it)",
         "                             on node1"]
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "expected: WOULD CHANGE: the 3 config files listed above (Medusa, packages, the JMX users: not listed," \
+    assert "expected: WOULD CHANGE: the 3 config files listed above (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
         " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
         in said, said
     for text in (report([node(1), node(2)], self_check=checks, details=False),
@@ -1760,7 +1760,7 @@ def test_the_next_step_expects_the_writes_then_every_node_up_to_date():
     checks = {"node1": {"differences": [], "notes": [], "writes": PROD_WRITES[:1]},
               "node2": {"differences": [], "notes": [], "writes": []}}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
-    assert "expected: WOULD CHANGE: the 1 config file listed above (Medusa, packages, the JMX users: not listed," \
+    assert "expected: WOULD CHANGE: the 1 config file listed above (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
         " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
         in said, said
     checks["node1"]["writes"] = []
@@ -1864,7 +1864,6 @@ def _allowed_restart_phrases():
         OUTSIDE_UNIT_THEN,  # (apply_config's rule for a JVM outside its unit, said where its --check says it)
         UNIT_AT_RESTART,  # (apply_config's own note, quoted)
         # observed facts and the import itself
-        "starts or restarts no node",
         "checks its port before each restart",  # (the role's guard of the exporter's port)
     ]
 
@@ -1880,7 +1879,7 @@ def _convergence_restarts():
 # facts with a value in them: Cassandra's own behaviour, the unit's systemd policy, the JDK the JVM runs
 RESTART_FACTS = (r"\(the node would not restart with (it|them)\)", r"would not start again with \S+ after a restart",
                  r"would restart empty", r"Restart=\S+", r"cassandra_service_restart\b",
-                 r"restart pending on a new JDK: .*? once restarted",
+                 r"restart pending on a new JDK: [^.;]*? once restarted",
                  r"\d+ nodes? changes?, no restart \(Java \d+ does not read jvm\d+-server\.options\)")  # (convergence)
 
 
@@ -1892,7 +1891,7 @@ def restart_lines(lines):
         text = text.replace(phrase, "")
     for fact in _convergence_restarts() + list(RESTART_FACTS):
         text = re.sub(fact, "", text)
-    return re.findall(r"[^.;:]*\brestart(?:s|ed|ing)?\b[^.;]*", text, re.I)
+    return re.findall(r"[^.;:]*\bre-?start(?:s|ed|ing)?\b[^.;]*", text, re.I)
 
 
 def test_no_restart_said_by_the_import_but_apply_config_s():
@@ -1919,7 +1918,10 @@ def test_no_restart_said_by_the_import_but_apply_config_s():
     # (the guard itself: a restart said by the import is caught, wrapped or not)
     for said in (["    the next apply_config, no restart:"], ["apply_config writes it, then restarts the node"],
                  ["the same Java options, no restart (same Java options)"], ["a restart each (WHAT HAPPENS)"],
-                 ["a node restarting"], ["rewrites the file and", "restarts the node"]):
+                 ["a node restarting"], ["rewrites the file and", "restarts the node"],
+                 ["the next apply_config re-starts the node"], ["apply_config starts or restarts no node"],
+                 # (a fact's pattern stops at its sentence: what follows it is read)
+                 ["restart pending on a new JDK: x. The node restarts once restarted"]):
         assert restart_lines(said), said
 
 
@@ -1928,10 +1930,14 @@ def test_the_unit_is_listed_apart_out_of_the_count():
     # apart, not one of the N files WOULD CHANGE shows
     unit = [{"file": "cassandra.service", "what": "unit", "why": ["layout"], "diff": ["-a", "+b"]}]
     checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[:1] + unit} for i in (1, 2)}
+    checks["node1"]["writes"] = checks["node1"]["writes"] + writes(("cassandra.yaml", "header"))
     lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
+    rows = [line.split()[0] for line in sync(lines)[2:] if line.startswith("      ") and not line.startswith("       ")]
+    # (round 7) the files written, the header lines, the unit last
+    assert rows[:3] == ["cassandra-env.sh", "cassandra.yaml", "cassandra.service"], sync(lines)
     assert "      cassandra.service   written at its next restart (apply_config's note)" in sync(lines), sync(lines)
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "WOULD CHANGE: the 1 config file listed above" in said, said
+    assert "WOULD CHANGE: the 2 config files listed above" in said, said  # (cassandra-env.sh, cassandra.yaml)
     checks = {"node%d" % i: {"differences": [], "notes": [], "writes": unit} for i in (1, 2)}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, screen=True))
     assert "expected: every node up to date (cassandra.service: written at its next restart (apply_config's note))" \
