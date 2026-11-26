@@ -304,8 +304,8 @@ def test_a_cassandra_its_unit_did_not_start_is_not_restarted(unit_running, jvm, 
     # drift's compare (apply_config compare-only): not refused either, drift says what differs
     assert not all(render("{{ %s }}" % w, dict(variables, _cassandra_apply_config_compare_only=True)) for w in t["when"])
     if refused:
-        msg = " ".join(render(t["ansible.builtin.fail"]["msg"], dict(variables, _why=render(t["vars"]["_why"],
-                                                                                         variables))).split())
+        why = render(t["vars"]["_why"], variables)
+        msg = " ".join(render(t["ansible.builtin.fail"]["msg"], dict(variables, _why=why)).split())
         # (the fact observed, no guessed cause: audit round 8)
         assert msg.startswith("node1: Cassandra runs (pid 4242) outside its cassandra unit (not in its control"
                               " group). ")
