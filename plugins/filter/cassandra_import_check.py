@@ -918,7 +918,8 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
 # cassandra_medusa's compare says it); cassandra_service's unit is in (written when its text differs, its keys the
 # node's: the self-check's)
 OTHER_ROLES_FILES = ("medusa.ini",)
-UNIT_WRITTEN = "layout (apply_config --check says when it writes it)"
+# (apply_config writes it at the node's next restart only, its note "next restart: the cassandra unit written")
+UNIT = "cassandra.service"
 # a JVM options line of the heap (its placement: the role writes it in jvm-server.options)
 HEAP_LINE = re.compile(r"^-Xm[snx]")
 
@@ -926,7 +927,7 @@ HEAP_LINE = re.compile(r"^-Xm[snx]")
 def apply_config_writes(rendered, live, storage_dir="", series="", java="", password_line=False, release=""):
     """What cassandra_config would write on a node whose files are live ({file: text}) from rendered ({file: the
     role's text}), the files it leaves as they are aside (the same text, or the same settings and its header line
-    there): [{file, what: created | rewritten | header, why: [reason], diff: [line]}], the files it creates
+    there): [{file, what: created | rewritten | header | unit, why: [reason], diff: [line]}], the files it creates
     first (an options file of another Java the node lacks), then by file.
     A file of the same settings gets the role's header line (cassandra_config_header). One with other settings (the
     self-check found no difference, else it is one) is rewritten, why: "heap placement" (an options file whose -Xms,
@@ -972,13 +973,13 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
             why.append("%s removed (Cassandra %s rejects %s)" % (", ".join(rejected), release,
                                                                  "it" if len(rejected) == 1 else "them"))
         else:
-            why.append(UNIT_WRITTEN if name == "cassandra.service" else "layout")
+            why.append("layout")
         if name == "cassandra-env.sh" and password_line:
             why.append("the JMX password file option back (never read)")
         diff = [] if name == "jmxremote.password" else list(difflib.unified_diff(
             mask(node).split("\n"), mask(role).split("\n"), "%s (the node's)" % name, "%s (the role's)" % name,
             lineterm=""))
-        out.append({"file": name, "what": "rewritten", "why": why, "diff": diff})
+        out.append({"file": name, "what": "unit" if name == UNIT else "rewritten", "why": why, "diff": diff})
     return out
 
 

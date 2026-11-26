@@ -67,10 +67,8 @@ def exporter_import(live_files, cmdline, ctx, read=None, conf_dirs=(), java_file
         "; drop it from your own copies of %s: its guards are not kept, the role puts the jar and the config in place"
         " and checks its port before each restart" % found["file"] if found["guarded"] else "")]
     if found["option"] not in str(cmdline or "").split("\0") and cmdline:
-        notes.append("%s: the running JVM does not have the Prometheus exporter's agent its config gives (%s; %s):"
-                     " with the role it loads at the next restart" % (
-                         where, cassandra_secrets.mask(found["option"]), "its guards failed at its start?" if found["guarded"]
-                         else "a file its Java does not read, or written since it started?"))
+        notes.append("%s: the running JVM does not have the Prometheus exporter's agent its config gives (%s): a JVM"
+                     " loads its agents at its start" % (where, cassandra_secrets.mask(found["option"])))
     return files, "\0".join(args), {"vars": variables, "moved": moved, "notes": notes, "found": found}
 
 

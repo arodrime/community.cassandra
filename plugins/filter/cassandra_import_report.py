@@ -1896,7 +1896,7 @@ def _writes(report, self_check):
     found = {}
     for name in report.names:
         for w in ((self_check or {}).get(name) or {}).get("writes") or []:
-            found.setdefault((w["what"] == "header", w["file"], w["what"], tuple(w["why"])), []).append(name)
+            found.setdefault((w["what"] in ("header", "unit"), w["file"], w["what"], tuple(w["why"])), []).append(name)
     return [(f, what, list(why), members) for (dummy, f, what, why), members in sorted(found.items())]
 
 
@@ -1918,12 +1918,17 @@ def _writes_diff_lines(report, self_check):
     return ["", "%s  (their diffs)" % WRITES_DIFFS] + lines if lines else []
 
 
+# the unit the next apply_config writes (cassandra_service): at the node's next restart, apply_config's note says
+UNIT_AT_RESTART = "written at its next restart (apply_config's note)"
+
+
 def _writes_rows(report, writes):
     """The rows of _writes, one fact each: a file with what it gets and why, then its nodes when not all the nodes
     read -> [(file, text)]."""
     rows = []
     for f, what, why, members in writes:
-        rows.append((f, "header line added" if what == "header" else "%s: %s" % (what, ", ".join(why))))
+        rows.append((f, "header line added" if what == "header" else UNIT_AT_RESTART if what == "unit"
+                     else "%s: %s" % (what, ", ".join(why))))
         rows += [("", "on %s" % out.nodes(members))] if len(members) < len(report.names) else []
     return rows
 
@@ -2096,8 +2101,11 @@ def _apply_config_expects(writes, rewrites, unread=False):
     covered): the config files the head lists under "the next apply_config" (writes, _writes'), the rewrites with no
     effect (rewrites); whether a node restarts is its own to say -> text."""
     on = "on the nodes read (the others not covered): " if unread else ""
+    unit = [w for w in writes if w[1] == "unit"]
+    writes = [w for w in writes if w[1] != "unit"]  # (written at a restart: apply_config's note, not WOULD CHANGE)
     if not writes:
-        return on + ("only the rewrites under %s" % REWRITES if rewrites else "every node up to date")
+        return on + ("only the rewrites under %s" % REWRITES if rewrites else "every node up to date") + (
+            " (cassandra.service: %s)" % UNIT_AT_RESTART if unit else "")
     return on + "WOULD CHANGE: the %s listed above%s (%s: not listed, apply_config --check shows them); whether a" \
         " node restarts: apply_config --check says it (WHAT HAPPENS)" % (
             out.plural(len(set(w[0] for w in writes)), "config file"),

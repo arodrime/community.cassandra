@@ -2108,4 +2108,10 @@ def test_the_unit_written_for_its_layout_is_listed():
     node = {"cassandra.service": "# by hand\n[Unit]\nDescription=Cassandra\n[Service]\nUser=cassandra\n",
             "medusa.ini": "[cassandra]\nkey=1\n"}
     assert [(w["file"], w["what"], w["why"]) for w in apply_config_writes(role, node)] == [
-        ("cassandra.service", "rewritten", ["layout (apply_config --check says when it writes it)"])]
+        ("cassandra.service", "unit", ["layout"])]
+    # (round 6) apply_config writes it at the node's next restart only, its note says so: the head too, out of the
+    # count of the files WOULD CHANGE shows
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import UNIT_AT_RESTART
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "playbooks", "apply_config.yml")) as f:
+        assert "next restart: the cassandra unit written" in f.read()
+    assert UNIT_AT_RESTART == "written at its next restart (apply_config's note)"

@@ -1845,26 +1845,54 @@ def test_what_stays_per_node_though_every_node_has_it():
     assert "cassandra_install_tools" not in layout["group_vars"]["my_cluster"]
 
 
-# (audit round 5) the import says what it observed and what apply_config writes; whether a node restarts is
-# apply_config's to say (--check, WHAT HAPPENS). The lines with a restart word the import may still print, each one
-# not a prediction of the import's:
-RESTART_WORDS_ALLOWED = (
-    r"WHAT HAPPENS|whether (a|the) nodes? restarts?",  # (where apply_config says it, a line of it wrapped)
-    r"a restart by apply_config is refused there",  # (apply_config's rule for a JVM outside its unit, its --check)
-    r"its plan says what restarts",  # (the same, said before)
-    r"starts or restarts no node",  # (the import itself)
-    r"Restart=|cassandra_service_restart",  # (the unit's systemd policy, read on the node)
-    r"would restart empty|would not start again with .* after a restart",  # (Cassandra's own behaviour, a finding)
-    r"restart pending on a new JDK|once restarted",  # (the JDK the running JVM runs, removed since its start)
-    # the convergence plan of DIFFERENT ON SOME NODES (cassandra_import_convergence.KINDS, shared with drift): a
-    # decision of its own, kept
-    r"nodes? change, (then restart|no restart|restart unknown)|then restart|no restart \(",
-)
+# (audit rounds 5, 6) the import says what it observed and what apply_config writes; whether a node restarts is
+# apply_config's to say (--check, WHAT HAPPENS). The text with a restart word the import may still print, exactly,
+# each one not a prediction of the import's (the lines joined: a phrase wrapped is still the phrase):
+def _allowed_restart_phrases():
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import KINDS
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_report import (
+        OUTSIDE_UNIT_THEN, UNIT_AT_RESTART)
+    return [
+        # the deferrals to apply_config, in their exact forms
+        "whether a node restarts: apply_config --check says it (WHAT HAPPENS)",
+        "(whether the node restarts: apply_config --check, WHAT HAPPENS)",
+        "whether the nodes restart: apply_config --check, WHAT HAPPENS)",
+        "the restarts: its WHAT HAPPENS",
+        "(apply_config writes it; its plan says what restarts)",
+        "whether the node restarts: its WHAT HAPPENS",
+        "whether the node restarts, the roles would revert",
+        OUTSIDE_UNIT_THEN,  # (apply_config's rule for a JVM outside its unit, said where its --check says it)
+        UNIT_AT_RESTART,  # (apply_config's own note, quoted)
+        # observed facts and the import itself
+        "starts or restarts no node",
+        "checks its port before each restart",  # (the role's guard of the exporter's port)
+    ]
+
+
+def _convergence_restarts():
+    """The convergence plan of DIFFERENT ON SOME NODES (cassandra_import_convergence.KINDS, shared with drift): a
+    decision of its own, kept as it is: "<N> node(s) change(s), <its KINDS text>" exactly -> [regex]."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_convergence import KINDS
+    return [r"\d+ nodes? changes?, " + re.escape(text) for text in sorted(
+        set(k[1] for k in KINDS.values() if re.search(r"\brestart", k[1])), key=len, reverse=True)]
+
+
+# facts with a value in them: Cassandra's own behaviour, the unit's systemd policy, the JDK the JVM runs
+RESTART_FACTS = (r"\(the node would not restart with (it|them)\)", r"would not start again with \S+ after a restart",
+                 r"would restart empty", r"Restart=\S+", r"cassandra_service_restart\b",
+                 r"restart pending on a new JDK: .*? once restarted",
+                 r"\d+ nodes? changes?, no restart \(Java \d+ does not read jvm\d+-server\.options\)")  # (convergence)
 
 
 def restart_lines(lines):
-    return [line for line in lines if re.search(r"\brestart(s|ed)?\b", line, re.I)
-            and not any(re.search(allowed, line) for allowed in RESTART_WORDS_ALLOWED)]
+    """The phrases with a restart word (restart, restarts, restarted, restarting) left once the allowed ones are
+    taken out of the text (its lines joined)."""
+    text = " ".join(" ".join(line.split()) for line in lines)
+    for phrase in _allowed_restart_phrases():
+        text = text.replace(phrase, "")
+    for fact in _convergence_restarts() + list(RESTART_FACTS):
+        text = re.sub(fact, "", text)
+    return re.findall(r"[^.;:]*\brestart(?:s|ed|ing)?\b[^.;]*", text, re.I)
 
 
 def test_no_restart_said_by_the_import_but_apply_config_s():
@@ -1877,7 +1905,9 @@ def test_no_restart_said_by_the_import_but_apply_config_s():
              node(3, keep={"cassandra_config_keep_files": ["jvm8-server.options"]}),
              node(4, read=False)]
     nodes[0]["vars"] = dict(nodes[0]["vars"], cassandra_heap_size="1G")
-    checks = {"node%d" % i: {"differences": [], "notes": [PASSWORD_FILE_NOTE], "writes": PROD_WRITES} for i in (1, 2, 3)}
+    unit = [{"file": "cassandra.service", "what": "unit", "why": ["layout"], "diff": []}]
+    checks = {"node%d" % i: {"differences": [], "notes": [PASSWORD_FILE_NOTE], "writes": PROD_WRITES + unit}
+              for i in (1, 2, 3)}
     seen = []
     for kwargs in ({}, {"screen": True}, {"details": True}, {"details": False}):
         seen += report(nodes, self_check=checks, allow_unread=True, **kwargs)
@@ -1886,5 +1916,23 @@ def test_no_restart_said_by_the_import_but_apply_config_s():
     with open(os.path.join(os.path.dirname(__file__), "fixtures", "import_88_report.txt")) as f:
         seen += f.read().split("\n")
     assert restart_lines(seen) == []
-    # (the guard itself: a restart said by the import is caught)
-    assert restart_lines(["    the next apply_config, no restart:", "rewrites the file and restarts the node"])
+    # (the guard itself: a restart said by the import is caught, wrapped or not)
+    for said in (["    the next apply_config, no restart:"], ["apply_config writes it, then restarts the node"],
+                 ["the same Java options, no restart (same Java options)"], ["a restart each (WHAT HAPPENS)"],
+                 ["a node restarting"], ["rewrites the file and", "restarts the node"]):
+        assert restart_lines(said), said
+
+
+def test_the_unit_is_listed_apart_out_of_the_count():
+    # (audit round 6) apply_config writes cassandra.service at the node's next restart only (its note): listed
+    # apart, not one of the N files WOULD CHANGE shows
+    unit = [{"file": "cassandra.service", "what": "unit", "why": ["layout"], "diff": ["-a", "+b"]}]
+    checks = {"node%d" % i: {"differences": [], "notes": [], "writes": PROD_WRITES[:1] + unit} for i in (1, 2)}
+    lines = report([node(1), node(2)], self_check=checks, screen=True, width=200)
+    assert "      cassandra.service   written at its next restart (apply_config's note)" in sync(lines), sync(lines)
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "WOULD CHANGE: the 1 config file listed above" in said, said
+    checks = {"node%d" % i: {"differences": [], "notes": [], "writes": unit} for i in (1, 2)}
+    said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, screen=True))
+    assert "expected: every node up to date (cassandra.service: written at its next restart (apply_config's note))" \
+        in said, said
