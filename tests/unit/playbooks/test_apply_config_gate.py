@@ -277,7 +277,7 @@ def test_the_compare_runs_the_rest_where_the_plan_lists_something():
     assert plan["ansible.builtin.include_role"]["tasks_from"] == "plan.yml" and "when" not in plan
     assert rest["ansible.builtin.include_role"]["tasks_from"] == "apply_plan.yml" and rest["when"] == "_rest | bool"
     for task in (plan, rest):
-        assert task["ansible.builtin.include_role"]["apply"] == {"check_mode": True}
+        assert task["ansible.builtin.include_role"]["apply"] == {"check_mode": True, "diff": False}
     for full, verify, writes, runs in [(False, False, [], False), (False, False, ["files"], True),
                                        (True, False, [], True), (False, True, [], True)]:
         assert render(COMPARE["vars"]["_rest"], _cassandra_apply_full=full, _cassandra_apply_verify=verify,
