@@ -2088,7 +2088,13 @@
     # the package update changed
     _more: >-
       {{ (_no_return_warning if ansible_check_mode and _no_return else [])
-         + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else []) + _limits_changed }}
+         + ([{'label': 'the ring', 'text': _ring_unknown}] if ansible_check_mode else []) + _limits_changed
+         + _unknown_vars }}
+    # a variable not known (a typo?): said mid-run by preflight, repeated here with the grep that finds it
+    _unknown_vars: >-
+      {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars)
+         | map(attribute='_cassandra_preflight_unknown', default={}) | list
+         | community.cassandra.cassandra_unknown_recap(ansible_inventory_sources | default([]), lookup('ansible.builtin.env', 'PWD')) }}
     _no_return_warning:
       - label: "{{ _no_return | community.cassandra.cassandra_node_list }}"
         text: >-

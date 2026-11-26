@@ -23,6 +23,11 @@
          if _localhost['_cassandra_run_start'] | default('') else none }}
     _localhost: "{{ hostvars['localhost'] | default({}) }}"
     # a package update that changed a limits file left to the node (cassandra_linux_manage: false)
+    # and a variable not known (a typo?), said mid-run by preflight: repeated with the grep that finds it
     _warnings: >-
       {{ cassandra_service_summary_hosts | default(query('community.cassandra.cassandra_nodes'))
-         | community.cassandra.cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD')) }}
+         | community.cassandra.cassandra_limits_changed(hostvars, lookup('ansible.builtin.env', 'PWD')) + _unknown }}
+    _unknown: >-
+      {{ query('community.cassandra.cassandra_nodes') | map('extract', hostvars)
+         | map(attribute='_cassandra_preflight_unknown', default={}) | list
+         | community.cassandra.cassandra_unknown_recap(ansible_inventory_sources | default([]), lookup('ansible.builtin.env', 'PWD')) }}

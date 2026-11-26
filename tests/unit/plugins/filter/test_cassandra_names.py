@@ -273,3 +273,21 @@ def test_a_comment_pasted_into_a_key_names_the_variable_its_last_word_makes():
                     "         cassandra_log_console not set: its default applies meanwhile"]
     assert all(len(line) <= 79 for line in note)
     assert cassandra_unknown_note("cassandra_x", "", "n1").rsplit("\n", maxsplit=1)[-1] == "         no role or playbook reads it"
+
+
+def test_the_recap_repeats_an_unknown_variable_with_the_grep_that_finds_it():
+    """(2026-11-26, rig screens) the warning was only said mid-run: the recap repeats it, one line, and the grep
+    (fixed strings: the key holds a "#") over the inventory's dir."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import cassandra_unknown_recap
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_summary import cassandra_warnings
+    key = "cassandra_# Logging (logback.xml)log_console"
+    found = cassandra_unknown_recap([{key: "cassandra_log_console"}, {key: "cassandra_log_console"}, {}],
+                                    ["/work/inventories/test/hosts.yml"], "/work")
+    assert cassandra_warnings(found) == [
+        "WARNING  1 variable not known to this collection (probably a typo): see above",
+        "         find it in the inventory:",
+        "  grep -RnF -e 'cassandra_# Logging (logback.xml)log_console' inventories/test"]
+    two = cassandra_unknown_recap([{"cassandra_b": ""}, {"cassandra_a": ""}], ["/inv"])
+    assert two[0]["text"][0].startswith("2 variables not known")
+    assert two[0]["text"][2].endswith("grep -RnF -e cassandra_a -e cassandra_b /")  # (a source with no dir of its own)
+    assert cassandra_unknown_recap([{}, None], ["/inv"]) == []

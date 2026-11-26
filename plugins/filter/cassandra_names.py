@@ -19,10 +19,12 @@ import functools
 import glob
 import os
 import re
+import shlex
 
 import yaml
 
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_roles import role_file, roles_with_defaults
 
 _TOP = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -83,7 +85,7 @@ NOT_VARIABLES = frozenset((
     "cassandra_service_other_seeds", "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
     "cassandra_sysctl_todo",
     "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
-    "cassandra_topology_refusals", "cassandra_unknown_note", "cassandra_upgrade_copy_refusal",
+    "cassandra_topology_refusals", "cassandra_unknown_note", "cassandra_unknown_recap", "cassandra_confirm_stop", "cassandra_path_lines", "cassandra_upgrade_copy_refusal",
     # other words: a file the roles read (plugin_utils/cassandra_config_record.py), a module a template's comment
     # names (cassandra_os.py)
     "cassandra_config_record", "cassandra_os"))
@@ -219,6 +221,29 @@ def cassandra_unknown_note(name, close="", where="", close_set=False, hosts=None
     return "\n".join(lines)
 
 
+def cassandra_unknown_recap(unknown, sources=None, cwd=None):
+    """unknown: each node's cassandra_unknown_names (preflight's _cassandra_preflight_unknown); sources: the
+    inventory's; cwd: the run's directory. The line the recap at the end of a run repeats (the warning itself is
+    said mid-run), with the grep that finds the keys in the inventory (fixed strings: a key may hold a "#") ->
+    [{label, text}] for the recap's warnings, [] when none.
+    Example: [{"cassandra_log_consol": "cassandra_log_console"}], ["inv/hosts.yml"] -> text ["1 variable not known
+    to this collection (probably a typo): see above", "         find it in the inventory:", "  grep -RnF -e
+    cassandra_log_consol inv"]."""
+    names = sorted(set(name for found in unknown or [] if isinstance(found, dict) for name in found))
+    if not names:
+        return []
+    dirs = []
+    for source in sources or []:
+        base = str(source) if os.path.isdir(str(source)) else os.path.dirname(str(source)) or "."
+        base = out.path_from(base, cwd) if cwd else base
+        if base not in dirs:
+            dirs.append(base)
+    grep = " ".join(["grep -RnF"] + ["-e %s" % shlex.quote(n) for n in names] + [shlex.quote(d) for d in dirs or ["."]])
+    return [{"label": "", "text": ["%s not known to this collection (probably a typo): see above"
+                                   % out.plural(len(names), "variable"), " " * 9 + "find it in the inventory:",
+                                   "  " + grep]}]
+
+
 def cassandra_renamed_names(names):
     """names: the variables set. Returns {name: its name now} for those set under a former name, {name: ""} for
     those no longer read (REMOVED).
@@ -306,4 +331,5 @@ class FilterModule(object):
         return {"cassandra_close_names": cassandra_close_names, "cassandra_unknown_names": cassandra_unknown_names,
                 "cassandra_renamed_names": cassandra_renamed_names, "cassandra_unknown_extra_vars": cassandra_unknown_extra_vars,
                 "cassandra_former_name_text": cassandra_former_name_text, "cassandra_unknown_note": cassandra_unknown_note,
+                "cassandra_unknown_recap": cassandra_unknown_recap,
                 "cassandra_files_setting": cassandra_files_setting}
