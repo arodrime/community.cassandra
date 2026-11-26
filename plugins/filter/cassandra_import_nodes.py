@@ -42,7 +42,8 @@ KEYS = ("ansible_facts", "ansible_host", "import_cluster_address", "import_clust
         "import_cluster_java_updated",
         "import_cluster_jmx_slurp", "import_cluster_jvm_cmdline",
         "import_cluster_keep", "import_cluster_log_dir", "import_cluster_medusa",
-        "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_os", "import_cluster_os_found",
+        "import_cluster_medusa_ini", "import_cluster_newer_files", "import_cluster_newer_from", "import_cluster_os",
+        "import_cluster_os_found",
         "import_cluster_own_os", "import_cluster_own_cqlsh", "import_cluster_cqlsh", "import_cluster_cqlsh_command",
         "import_cluster_cqlsh_error", "import_cluster_package_offered", "import_cluster_repo_files",
         "import_cluster_package",
@@ -383,8 +384,9 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
     if read:
         notes += list(config.get("jvm_notes") or [])
     if read and hv.get("import_cluster_newer_files", []):
-        notes.append("%s written after Cassandra started: it may not run what they say. apply_config does not restart"
-                     " it for them; rolling_restart applies them" % ", ".join(hv["import_cluster_newer_files"]))
+        notes.append("%s changed since the running Cassandra started (%s)" % (
+            ", ".join(hv["import_cluster_newer_files"]), "apply_config's record of that start"
+            if hv.get("import_cluster_newer_from") == "record" else "written after it started"))
     untrusted = (hv.get("import_cluster_unit") or {}).get("jvm_untrusted")
     if read and untrusted:
         notes.append("the running JVM's arguments and environment not used to prove the roles' files give it the same:"
@@ -484,6 +486,9 @@ def _node(item, host, hv, given, jmx, java_default, host_names, set_ansible_host
         # a node not read is an existing node too: nothing of it is taken over. The firewall (or none) is the
         # node's: no mark tells one the role set up
         "keep": node_keep,
+        # its Cassandra runs outside its unit's control group (import_running.sh's jvm_untrusted)
+        "outside_unit": read and "not started by the cassandra unit" in str(
+            (hv.get("import_cluster_unit") or {}).get("jvm_untrusted") or ""),
         "hand_edits": config.get("hand_edits", []),
         "normalized": config.get("normalized", []),
         "comments": config.get("comments", []),
@@ -533,12 +538,12 @@ def cassandra_import_nodes(ring, data, given, found=None, jmx=None, java_default
 
 
 def cassandra_import_newer_files(conf_files, jvm, record="", slurped=None):
-    """The config files written since the running Cassandra started, as apply_config takes them (config_pending.yml:
-    the ones it would see as a change pending, or as not known): with apply_config's record of that start (record:
-    its text in base64, the record of that JVM: the same pid, the same start), the files whose sha1 is neither the
-    one recorded nor the one of the role's rendering of the same settings (the contents read: slurped, slurp's
-    results; a file not read: by its time); else the files changed since it started (ctime) -> sorted [name].
-    conf_files: find's result of the conf dir; jvm: cassandra_jvm ({pid, start})."""
+    """The config files changed since the running Cassandra started, as apply_config takes them (config_pending.yml):
+    with apply_config's record of that start (record: its text in base64, the record of that JVM: the same pid, the
+    same start), the files whose sha1 is neither the one recorded nor the one of the role's rendering of the same
+    settings (the contents read: slurped, slurp's results; a file not read: by its time); else the files written
+    since it started (ctime) -> {files: sorted [name], from: record | times}. conf_files: find's result of the conf
+    dir; jvm: cassandra_jvm ({pid, start})."""
     files = (conf_files or {}).get("files") or []
     start = float((jvm or {}).get("start") or 0)
     newer = sorted(os.path.basename(f["path"]) for f in files if float(f.get("ctime") or 0) > start)
@@ -549,7 +554,7 @@ def cassandra_import_newer_files(conf_files, jvm, record="", slurped=None):
     started = record.get("_jvm") or {} if isinstance(record, dict) else {}
     if not started or str(started.get("pid", "")) != str((jvm or {}).get("pid", "-")) \
             or abs(float(started.get("start") or 0) - start) >= 2:
-        return newer
+        return {"files": newer, "from": "times"}
     recorded = dict((os.path.basename(k), v) for k, v in record.items() if k.startswith("/"))
     same = dict((os.path.basename(k), v) for k, v in (record.get("_same_settings") or {}).items())
     contents = dict((r["item"], base64.b64decode(r["content"])) for r in slurped or [] if "content" in r)
@@ -563,7 +568,7 @@ def cassandra_import_newer_files(conf_files, jvm, record="", slurped=None):
             changed = recorded.get(name) != sha1 and same.get(name) != sha1
         if changed:
             out.append(name)
-    return sorted(out)
+    return {"files": sorted(out), "from": "record"}
 
 
 class FilterModule(object):

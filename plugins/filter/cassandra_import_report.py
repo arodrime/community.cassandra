@@ -1889,16 +1889,13 @@ WRITES_DIFFS = "REWRITES OF THE NEXT APPLY_CONFIG"
 
 def _writes(report, self_check):
     """What the next apply_config writes on the nodes read with no effect on the values (the self-check's writes: the
-    files it rewrites, the ones it adds its header line to), the same on several nodes once -> [(file, what, why,
-    restart, [node])], the rewritten files first; restart: why apply_config restarts the running Cassandra for it,
-    "" when it does not."""
+    files it creates or rewrites, the ones it adds its header line to), the same on several nodes once ->
+    [(file, what, why, [node])], the header lines last."""
     found = {}
     for name in report.names:
         for w in ((self_check or {}).get(name) or {}).get("writes") or []:
-            found.setdefault((w["what"] == "header", w["file"], w["what"], tuple(w["why"]), w.get("restart") or ""),
-                             []).append(name)
-    return [(f, what, list(why), restart, members)
-            for (dummy, f, what, why, restart), members in sorted(found.items())]
+            found.setdefault((w["what"] == "header", w["file"], w["what"], tuple(w["why"])), []).append(name)
+    return [(f, what, list(why), members) for (dummy, f, what, why), members in sorted(found.items())]
 
 
 def _writes_diff_lines(report, self_check):
@@ -1919,23 +1916,30 @@ def _writes_diff_lines(report, self_check):
     return ["", "%s  (their diffs)" % WRITES_DIFFS] + lines if lines else []
 
 
-def _restarts(writes, refused=False):
-    """The nodes of _writes apply_config restarts (refused: the ones whose restart it refuses, Cassandra outside its
-    unit), the files it restarts them for -> (sorted [node], sorted [file])."""
-    found = [(members, f) for f, dummy, dummy2, restart, members in writes
-             if restart and restart.startswith("refused") == refused]
-    return sorted(set(n for members, dummy in found for n in members)), sorted(set(f for dummy, f in found))
-
-
 def _writes_rows(report, writes):
-    """The rows of _writes, one fact each: a file with what it gets and why, under it the restart for it, then its
-    nodes when not all the nodes read -> [(file, text)]."""
+    """The rows of _writes, one fact each: a file with what it gets and why, then its nodes when not all the nodes
+    read -> [(file, text)]."""
     rows = []
-    for f, what, why, restart, members in writes:
+    for f, what, why, members in writes:
         rows.append((f, "header line added" if what == "header" else "%s: %s" % (what, ", ".join(why))))
-        rows += [("", restart)] if restart else []
         rows += [("", "on %s" % out.nodes(members))] if len(members) < len(report.names) else []
     return rows
+
+
+# a JVM outside its unit's control group (import_running.sh's jvm_untrusted): what apply_config does then, in its
+# own words (its refusal's way out)
+OUTSIDE_UNIT = "Cassandra runs outside its cassandra unit on %s: apply_config refuses to restart it"
+OUTSIDE_UNIT_WAY_OUT = ("Stop that Cassandra (nodetool drain, then stop what started it), start it with its unit"
+                        " (systemctl start cassandra), then run apply_config again.")
+
+
+def _outside_unit_lines(report, width):
+    """The nodes read whose Cassandra runs outside its unit, said with apply_config's way out -> [line]."""
+    names = [n["name"] for n in report.read if n.get("outside_unit")]
+    if not names:
+        return []
+    return fill_text(OUTSIDE_UNIT % out.nodes(names), width, "    ", "  ") + fill_text(
+        OUTSIDE_UNIT_WAY_OUT, width, "      ", "  ")
 
 
 # the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it, the rows under it the
@@ -1981,7 +1985,7 @@ def _sync_lines(report, data, self_check, self_check_error):
             gaps.append("%s not managed by Ansible on %s" % (INSTALLED.get(label, label),
                                                              unbreakable(out.plural(len(members), "node"))))
     lines = said("not all verified", gaps) if gaps else said("yes")
-    return lines + _next_writes_lines(report, self_check, width)
+    return lines + _next_writes_lines(report, self_check, width) + _outside_unit_lines(report, width)
 
 
 def _next_writes_lines(report, self_check, width):
@@ -1995,8 +1999,7 @@ def _next_writes_lines(report, self_check, width):
     lines = []
     writes = _writes(report, self_check)
     if writes or others:
-        lines.append("    the next apply_config%s:" % (
-            "" if _restarts(writes)[0] or _restarts(writes, True)[0] else ", no restart"))
+        lines.append("    the next apply_config:")
         if report.unread:  # (what it does on a node not read is not known)
             lines += fill_text("on the nodes read: %s" % out.nodes(report.names), width, "      ", "  ")
         lines += aligned_rows(_writes_rows(report, writes), "      ", width)
@@ -2081,16 +2084,13 @@ REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 def _apply_config_expects(writes, rewrites):
     """What apply_config --check --diff shows on the nodes imported: the files the head lists under "the next
-    apply_config, no restart" (writes, _writes'), the rewrites with no effect (rewrites) -> text."""
+    apply_config" (writes, _writes'), the rewrites with no effect (rewrites); whether a node restarts is its own to
+    say -> text."""
     if not writes:
         return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
-    restarted, refused = _restarts(writes), _restarts(writes, True)
-    happens = ["a restart of %s (for %s)" % (out.nodes(restarted[0]), ", ".join(restarted[1]))] if restarted[0] else []
-    happens += ["a real run refuses the restart of %s (Cassandra outside its unit)" % out.nodes(refused[0])] \
-        if refused[0] else []
-    return "WOULD CHANGE: the %s the head lists under the next apply_config%s; WHAT HAPPENS: %s" % (
-        out.plural(len(set(w[0] for w in writes)), "file"),
-        ", and the rewrites under %s" % REWRITES if rewrites else "", "; ".join(happens) or "no restart")
+    return "WOULD CHANGE: the %s listed above%s; whether a node restarts: apply_config --check says it (WHAT" \
+        " HAPPENS)" % (out.plural(len(set(w[0] for w in writes)), "file"),
+                       ", and the rewrites under %s" % REWRITES if rewrites else "")
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, writes,

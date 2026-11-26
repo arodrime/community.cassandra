@@ -309,11 +309,12 @@ def test_import_lists_the_config_files_written_since_the_start():
     assert found["Find when the running Cassandra started"]["ansible.builtin.include_role"]["tasks_from"] == "jvm_started.yml"
     read = found["Read the config files, when they were written, the JVM's arguments, the repository files and the unit"]
     assert "[['newer', 'find', [[import_cluster_conf_dir, _cassandra_service_config_files]]]]" in read["vars"]["_wanted"]
-    note = found["Note the ones written since it started"]["ansible.builtin.set_fact"]["import_cluster_newer_files"]
+    # (with no record of apply_config's of that start: by their times; with one: cassandra_import_newer_files)
+    note = found["Note the ones written since it started"]["vars"]["_newer"]
     files = [{"path": "/etc/cassandra/conf/%s" % n, "ctime": m}
              for n, m in [("cassandra.yaml", 90.0), ("jvm17-server.options", 100.6), ("cassandra-env.sh", 100.4)]]
-    assert render(note, {"import_cluster_conf_files": {"files": files}, "cassandra_jvm": {"start": "100.50"}}) == [
-        "jvm17-server.options"]
+    assert render(note, {"import_cluster_conf_files": {"files": files}, "cassandra_jvm": {"start": "100.50"}}) == {
+        "files": ["jvm17-server.options"], "from": "times"}
 
 
 def test_the_record_of_a_start_is_that_jvms_and_leaves_out_the_files_written_since(tmp_path):

@@ -1046,8 +1046,9 @@ a comment, no setting changes)``). That line is written in place, in the same fi
 context kept), not by a new file renamed over it: a write cut short (a full disk, a crash of the host) may leave the
 file part written, which Cassandra reads at its next start; the plan says the files it goes to. After an import, the
 first ``apply_config`` rewrites the files that differ from the role's only where Cassandra reads nothing (the header
-line, comments and layout, the heap in ``jvm-server.options`` rather than the options file of the node's Java), with no
-restart, as ``import_cluster`` says; the next one finds nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
+line, comments and layout, the heap in ``jvm-server.options`` rather than the options file of the node's Java), the
+ones ``import_cluster`` lists (whether a node restarts: the plan of ``apply_config --check``); the next one finds
+nothing to do. A file kept by hand (``cassandra_config_keep_files``, ``import_keep_hand_edits``) is not touched. A node where Cassandra is not running gets its config too: started once written when its
 unit failed (e.g. Cassandra could not read its config, or it crashed), left stopped when it was stopped (a stop that
 ended in a failed unit too). A Cassandra running outside its ``cassandra`` unit (not in the unit's control group: started by
 hand, or by a script of its own) whose config needs a restart is refused before any change: a restart through the unit

@@ -702,7 +702,10 @@
     # as apply_config takes them: its record of that start when there is one, else the files' times
     - name: Note the ones written since it started
       ansible.builtin.set_fact:
-        import_cluster_newer_files: >-
+        import_cluster_newer_files: "{{ _newer.files }}"
+        import_cluster_newer_from: "{{ _newer.from }}"  # (record: apply_config's, times: since none)
+      vars:
+        _newer: >-
           {{ import_cluster_conf_files | community.cassandra.cassandra_import_newer_files(cassandra_jvm,
                import_cluster_start_record | default(''), import_cluster_slurp.results | default([])) }}
       when: import_cluster_conf_files.files is defined

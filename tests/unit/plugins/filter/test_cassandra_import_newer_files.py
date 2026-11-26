@@ -29,10 +29,11 @@ def record(**more):
 
 
 def test_without_a_record_the_files_times():
-    assert cassandra_import_newer_files(FILES, JVM) == ["cassandra.yaml", "jvm-server.options"]
+    assert cassandra_import_newer_files(FILES, JVM) == {"files": ["cassandra.yaml", "jvm-server.options"],
+                                                        "from": "times"}
     # (a record of another JVM: as none)
     other = base64.b64encode(json.dumps({"_jvm": {"pid": 1, "start": 1000.5}}).encode()).decode()
-    assert cassandra_import_newer_files(FILES, JVM, other, SLURPED) == ["cassandra.yaml", "jvm-server.options"]
+    assert cassandra_import_newer_files(FILES, JVM, other, SLURPED)["files"] == ["cassandra.yaml", "jvm-server.options"]
 
 
 def test_with_the_record_of_that_start_its_checksums():
@@ -41,7 +42,20 @@ def test_with_the_record_of_that_start_its_checksums():
     rec = record(**{"/etc/cassandra/conf/cassandra.yaml": sha1(TEXT["cassandra.yaml"]),
                     "_same_settings": {"/etc/cassandra/conf/jvm-server.options": sha1(TEXT["jvm-server.options"])},
                     "/etc/cassandra/conf/logback.xml": sha1(b"<configuration scan='true'/>\n")})
-    assert cassandra_import_newer_files(FILES, JVM, rec, SLURPED) == ["logback.xml"]
+    assert cassandra_import_newer_files(FILES, JVM, rec, SLURPED) == {"files": ["logback.xml"], "from": "record"}
     # a file not read: by its time
-    assert cassandra_import_newer_files(FILES, JVM, rec, SLURPED[2:]) == ["cassandra.yaml", "jvm-server.options",
-                                                                          "logback.xml"]
+    assert cassandra_import_newer_files(FILES, JVM, rec, SLURPED[2:])["files"] == [
+        "cassandra.yaml", "jvm-server.options", "logback.xml"]
+
+
+def test_the_node_says_what_it_observed():
+    # (audit round 4) the note says the files and where that comes from, no claim about what applies them; a JVM
+    # outside its unit's control group is flagged (the head says it, with apply_config's way out)
+    from ansible_collections.community.cassandra.tests.unit.import_nodes import node
+    for basis, words in (("record", "apply_config's record of that start"), ("times", "written after it started")):
+        n = node({"import_cluster_newer_files": ["cassandra.yaml"], "import_cluster_newer_from": basis})
+        assert "cassandra.yaml changed since the running Cassandra started (%s)" % words in n["notes"], n["notes"]
+        assert not [note for note in n["notes"] if "rolling_restart" in note or "does not restart" in note]
+    untrusted = "not started by the cassandra unit (pid 7 is not in its control group)"
+    assert node({"import_cluster_unit": {"jvm_untrusted": untrusted}})["outside_unit"] is True
+    assert node()["outside_unit"] is False
