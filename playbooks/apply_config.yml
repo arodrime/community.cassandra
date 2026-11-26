@@ -134,7 +134,7 @@
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
         # (the file the resume picks; none: nothing to resume, said by the progress file's own check)
         _resumed: "{{ (cassandra_progress_found.files | default([]) | sort(attribute='mtime') | last | default({})).path | default('') }}"
-        # (none: a run of an earlier version, or one stopped before it was written: not known, given with apply_only)
+        # (none: not recorded; a resume given -e apply_only goes on, its parts recorded)
         _recorded: >-
           {{ lookup('ansible.builtin.file', _resumed | regex_replace('[.]done$', '.parts'), errors='ignore')
              | default('', true) | trim }}
@@ -142,17 +142,12 @@
         _current: >-
           {{ '' if apply_only | default('') | string in ['', 'None']
              else _cassandra_apply_parts.parts | join(',') if _cassandra_apply_parts.left_out else 'all' }}
-        _args:
-          inventory: "{{ ansible_inventory_sources | default([]) }}"
-          default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
-          hosts: "{{ cassandra_hosts | default('') }}"
-          cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
+        # (this run's command, --check kept: _cassandra_apply_command_over, a resume's without resuming)
         _resume: >-
-          {{ 'apply_config' | community.cassandra.cassandra_command(
-               extra=['-e cassandra_rolling_resume=true', '-e apply_only=' ~ (_recorded or 'all')], **_args) }}
+          {{ _cassandra_apply_command_over ~ ' -e cassandra_rolling_resume=true -e apply_only=' ~ (_recorded or 'all') }}
         _said: >-
           {{ _resumed | community.cassandra.cassandra_apply_resume_refusal(_recorded, _current, _resume,
-               'apply_config' | community.cassandra.cassandra_command(**_args)) }}
+                                                                            _cassandra_apply_command_over) }}
 
     # in the plan of a real run, said under --check (the checks' notes)
     - name: Say the parts left out

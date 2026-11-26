@@ -45,13 +45,16 @@ def cassandra_apply_only(value, command=""):
     names = _names(value)
     if not names or names == ["all"]:  # (all: every part, as without apply_only; said so to resume a run)
         return {"parts": list(PARTS), "left_out": [], "refused": []}
-    unknown = [n for n in names if n not in PARTS]
+    unknown = [n for n in names if n not in PARTS and n != "all"]
     way_out = ["WAY OUT  run:", "  %s -e apply_only=%s" % (
         command or "ansible-playbook community.cassandra.apply_config",
         ",".join(["config"] + [n for n in PARTS if n in names and n != "config"]))]
     if unknown:
         refused = ["apply_only: not a part of apply_config:"] + ["  " + n for n in unknown] + ["its parts:"] + [
-            "  " + p for p in PARTS] + way_out
+            "  " + p for p in PARTS] + ["  all (every part, given alone)"] + way_out
+    elif "all" in names:
+        refused = ["apply_only: all stands for every part: give it alone", "WAY OUT  run:",
+                   "  %s -e apply_only=all" % (command or "ansible-playbook community.cassandra.apply_config")]
     elif "config" not in names:
         refused = ["apply_only: config is not among the parts given",
                    "config is always compared: the restart decision reads it"] + way_out
@@ -80,7 +83,7 @@ def cassandra_apply_only_stops(names, hostvars, parts, command="", over=""):
     for part, why, needs in needed:
         nodes = [name for name in names if needs(hostvars[name])]
         if nodes and part not in parts:
-            refused += ["apply_only leaves %s out: %s on" % (part, why), "  " + out.nodes(nodes)]
+            refused += ["apply_only leaves %s out; %s, on these nodes:" % (part, why), "  " + out.nodes(nodes)]
             more.append(part)
     if refused:
         with_them = ",".join(p for p in PARTS if p in parts or p in more)
@@ -96,14 +99,13 @@ def cassandra_apply_only_stops(names, hostvars, parts, command="", over=""):
 def cassandra_apply_resume_refusal(resumed, recorded, current, resume_command, over_command):
     """A resume (-e cassandra_rolling_resume=true) of apply_config with other parts than the interrupted run's ->
     the lines of its refusal, [] when it may go on. resumed: the progress file it resumes; recorded: the parts the
-    interrupted run applied ('' not recorded: a run of an earlier version, which applied every part; all: every part);
+    interrupted run applied ('' not recorded; all: every part);
     current: this run's (all: every part, '': no -e apply_only given); resume_command: the command that resumes with
     the parts recorded (all when none); over_command: the one that starts over."""
     if not recorded:
         if current:  # (given with apply_only: the operator says which)
             return []
-        return ["%s: no record of the parts the interrupted run applied" % os.path.basename(resumed),
-                "(a run of an earlier version: every part)",
+        return ["%s: no record of the parts of the interrupted run" % os.path.basename(resumed),
                 "WAY OUT  resume with every part:", "  " + resume_command,
                 "WAY OUT  or start over without resuming:", "  " + over_command]
     if recorded == (current or "all"):

@@ -1158,8 +1158,10 @@ compares and lists, nothing written) and the rest (``tasks/apply_plan.yml``: wha
 the plan lists). ``apply_config`` runs the plan on every node, and the rest only where the plan lists something to
 write: elsewhere the rest would say nothing and leave the plan's facts as they are, so it is not run (the report
 says it in its ``COMPARE`` section: how many nodes the plan found unchanged, how many the role compared). The checks of
-the variables run once for the nodes whose values they read are the same: a warning or a refusal they share is said
-once, naming those nodes, where it was said once per node before; the other screens are the same. The Prometheus exporter on is always compared by the rest. The users' ``~/.cassandra`` files the role writes (cqlsh's
+the variables run once for the nodes whose variables they read are the same (the same names, the same values; a
+node with a value that cannot be read is checked on its own): a warning or a refusal they share is said once, naming
+those nodes, where it was said once per node before; on ansible-core 2.16 a grouped run can show more warnings than a
+per-node run (the other groups finish their checks before a refusal stops the run). The other screens are the same. The Prometheus exporter on is always compared by the rest. The users' ``~/.cassandra`` files the role writes (cqlsh's
 files of ``cassandra_cqlsh_credentials``, nodetool's ``nodetool-ssl.properties``) are compared by the plan: one to
 write is shown and written at the node's turn, with no restart (read by cqlsh and nodetool, not by Cassandra). ``-e apply_full=true`` runs the rest on every
 node, the checks per node and the users' ``~/.cassandra`` files not compared, as before; it is a fallback while the
@@ -1180,7 +1182,7 @@ interrupted one did (recorded next to its progress file, ``.parts``, written wit
 anything is written, with the command that resumes with them; a part a node needs, left out of a resume, stops it
 with the command that starts over with that part. A progress file with no record (a run of an earlier version, which
 applied every part) stops it too, with the two commands: resume with every part (``-e apply_only=all``), or start
-over; a resume given ``-e apply_only`` there goes on, and its parts are recorded.
+over; a resume given ``-e apply_only`` there goes on, and its parts are recorded. ``all`` (every part) is given alone.
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,
 swap, time sync, the read-ahead and IO scheduler of the data devices), except on a node with ``cassandra_linux_manage:

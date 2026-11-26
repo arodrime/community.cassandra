@@ -324,12 +324,16 @@ def test_apply_only_gives_the_parts(given, parts, left_out):
 def test_apply_only_refuses_an_unknown_part_or_no_config():
     said = cassandra_apply_only("config,linus", "ansible-playbook -i inv community.cassandra.apply_config --check")["refused"]
     assert said == (["apply_only: not a part of apply_config:", "  linus", "its parts:"] + ["  " + p for p in PARTS]
-                    + ["WAY OUT  run:", "  ansible-playbook -i inv community.cassandra.apply_config --check -e apply_only=config"])
+                    + ["  all (every part, given alone)", "WAY OUT  run:",
+                       "  ansible-playbook -i inv community.cassandra.apply_config --check -e apply_only=config"])
     said = cassandra_apply_only("linux", "CMD")["refused"]
     assert said == ["apply_only: config is not among the parts given",
                     "config is always compared: the restart decision reads it", "WAY OUT  run:",
                     "  CMD -e apply_only=config,linux"]
     assert cassandra_apply_only("all") == cassandra_apply_only("")  # (to resume a run of every part)
+    # (round 3, C3: all with parts: refused, given alone)
+    assert cassandra_apply_only("all,linux", "CMD")["refused"] == [
+        "apply_only: all stands for every part: give it alone", "WAY OUT  run:", "  CMD -e apply_only=all"]
 
 
 def test_apply_only_refuses_to_leave_out_what_a_node_needs():
@@ -339,9 +343,9 @@ def test_apply_only_refuses_to_leave_out_what_a_node_needs():
                 "n4": {"cassandra_java_plan_todo": True}}
     assert cassandra_apply_only_stops(list(hostvars), hostvars, list(PARTS), "CMD") == []
     said = cassandra_apply_only_stops(list(hostvars), hostvars, ["config", "unit", "linux"], "CMD")
-    assert said == ["apply_only leaves install out: a newer release of its series to install on", "  n1",
-                    "apply_only leaves axonops out: cassandra-env.sh loads the AxonOps agent on", "  n2",
-                    "apply_only leaves java out: another Java to move to (cassandra_java_version) on",  # (audit C10)
+    assert said == ["apply_only leaves install out; a newer release of its series to install, on these nodes:", "  n1",
+                    "apply_only leaves axonops out; cassandra-env.sh loads the AxonOps agent, on these nodes:", "  n2",
+                    "apply_only leaves java out; another Java to move to (cassandra_java_version), on these nodes:",  # (audit C10)
                     "  n3, n4",
                     "WAY OUT  run with those parts too:", "  CMD -e apply_only=config,unit,java,linux,install,axonops"]
     # (round 2, B4: a resume keeps the interrupted run's parts: start over)
@@ -430,9 +434,11 @@ def test_the_checks_values_are_all_read():
     listed = role_vars()["_cassandra_config_check_vars"]
     assert listed == sorted(listed)
     assert sorted(n for n in checks_read() if not by_name(n)) == listed  # (those by name: their patterns)
-    key = find_task(PLAN, "Note the values the checks read")
-    assert key["vars"]["_by_name"] == "{{ query('ansible.builtin.varnames', *_cassandra_config_check_names) }}"
-    assert "*(_cassandra_config_check_vars + _by_name)" in key["ansible.builtin.set_fact"]["_cassandra_config_check_key"]
+    key = find_task(PLAN, "Note the variables the checks read")
+    assert "query('ansible.builtin.varnames', *_cassandra_config_check_names)" in key["vars"]["_names"]
+    assert "_cassandra_config_check_vars | select('in'" in key["vars"]["_names"]
+    # (round 3, A1: names and values, not values alone)
+    assert "dict(_names | zip(query('ansible.builtin.vars', *_names" in key["ansible.builtin.set_fact"]["_cassandra_config_check_key"]
 
 
 def test_every_name_the_checks_build_is_in_their_key():
@@ -457,16 +463,17 @@ def test_every_name_the_checks_build_is_in_their_key():
 
 
 def test_the_checks_run_once_for_the_nodes_that_share_their_values():
-    group = find_task(PLAN, "Group the nodes whose checks read the same values")
+    group = find_task(PLAN, "Group the nodes whose checks read the same variables")
     hostvars = {"n1": {"_cassandra_config_check_key": "a"}, "n2": {"_cassandra_config_check_key": "b"},
                 "n3": {"_cassandra_config_check_key": "a"}, "n4": {}}  # (n4: no key, a group of its own)
     groups = cassandra_check_groups(list(hostvars), hostvars)
     assert groups == {"n1": ["n1", "n3"], "n2": ["n2"], "n4": ["n4"]}
-    key = find_task(PLAN, "Note the values the checks read")
+    key = find_task(PLAN, "Note the variables the checks read")
     assert key["ignore_errors"] is True and key["no_log"] is True  # (round 2, C1)
     assert group["run_once"] is True and "cassandra_check_groups(hostvars)" in str(group["ansible.builtin.set_fact"])
     checks = find_task(PLAN, "Check the variables of these nodes")
-    assert checks["when"] == "inventory_hostname in _cassandra_config_check_groups"
+    assert checks["when"] == ("inventory_hostname in _cassandra_config_check_groups"
+                              " or inventory_hostname not in _grouped")
     # per node elsewhere (a play whose nodes do not all run the plan), once in apply_config's compare
     assert find_task(PLAN, "Check the variables")["when"] == "not _cassandra_config_checks_once | default(false) | bool"
     once = COMPARE["vars"]["_cassandra_config_checks_once"]
@@ -590,9 +597,9 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
         return cassandra_apply_resume_refusal(str(done), rec, cur, "RESUME", "OVER")
     # audit B5: no record (an earlier version's run, or one stopped before it): refused, two exact ways out
     assert said("config,linux", None) == []  # (given: the operator says which)
-    assert said("", None) == ["c-apply_config-20261125T120000.done: no record of the parts the interrupted run applied",
-                              "(a run of an earlier version: every part)", "WAY OUT  resume with every part:",
-                              "  RESUME", "WAY OUT  or start over without resuming:", "  OVER"]
+    assert said("", None) == ["c-apply_config-20261125T120000.done: no record of the parts of the interrupted run",
+                              "WAY OUT  resume with every part:", "  RESUME", "WAY OUT  or start over without resuming:",
+                              "  OVER"]  # (round 3, B4: what was observed only)
     assert said("linux,config", "config,unit,linux\n") == []
     assert said("", "all\n") == []
     assert said("all", "all\n") == []
@@ -600,7 +607,10 @@ def test_a_resumed_run_keeps_the_parts_of_the_interrupted_one(tmp_path):
                                                "this one: every part",
                                                "a resumed run applies the parts the interrupted one did",
                                                "WAY OUT  resume with them:", "  RESUME"]
-    assert "'-e apply_only=' ~ (_recorded or 'all')" in refuse["vars"]["_resume"]  # (round 2, B3)
+    # (round 3, B3: one source for the command, --check kept: this run's, without resuming)
+    assert refuse["vars"]["_resume"] == ("{{ _cassandra_apply_command_over ~ ' -e cassandra_rolling_resume=true"
+                                         " -e apply_only=' ~ (_recorded or 'all') }}")
+    assert "_cassandra_apply_command_over) }}" in refuse["vars"]["_said"]
 
 
 WRITERS_ANYWHERE = WRITERS + ("ansible.builtin.include_tasks", "ansible.builtin.include_role", "ansible.builtin.import_tasks")
@@ -695,74 +705,148 @@ def test_every_name_the_checks_read_is_in_their_key():
                                          ("cassandra_jvm21_extra_options", ["-Xfoo"])])  # (a Java to come)
 def test_two_nodes_differing_in_a_value_the_checks_read_are_two_groups(name, value):
     # audit round 2, C2: the key itself (the task's template, its lookups), the groups from it
-    task = find_task(PLAN, "Note the values the checks read")
+    task = find_task(PLAN, "Note the variables the checks read")
     roles = role_vars()
     base = {"_cassandra_config_check_vars": roles["_cassandra_config_check_vars"],
             "_cassandra_config_check_names": roles["_cassandra_config_check_names"], "cassandra_heap_newsize": "",
             "cassandra_jvm17_max_gc_pause_millis": "", "cassandra_jvm21_extra_options": []}
 
     def key(**more):
-        variables = dict(base, **more)
-        variables["_by_name"] = render(task["vars"]["_by_name"], **variables)
+        variables = dict(base, inventory_hostname="n", **more)
+        variables["_names"] = render(task["vars"]["_names"], **variables)
+        variables["_unread"] = render(task["vars"]["_unread"], **variables)
         return render(task["ansible.builtin.set_fact"]["_cassandra_config_check_key"], **variables)
     hostvars = {"n1": {"_cassandra_config_check_key": key()}, "n2": {"_cassandra_config_check_key": key(**{name: value})},
                 "n3": {"_cassandra_config_check_key": key()}}
     assert cassandra_check_groups(list(hostvars), hostvars) == {"n1": ["n1", "n3"], "n2": ["n2"]}
 
 
+@pytest.mark.parametrize("one, other", [
+    ({"cassandra_jvm17_parallel_gc_threads": "300ms"}, {"cassandra_jvm17_max_gc_pause_millis": "300ms"}),
+    ({"cassandra_jvm17_max_gc_pause_millis": "300ms"}, {"cassandra_jvm11_max_gc_pause_millis": "300ms"}),
+    ({"cassandra_env_extra_lines": "x"}, {"cassandra_logback_extra_lines": "x"}),
+])
+def test_the_same_value_under_other_names_is_another_group(one, other):
+    # audit round 3, A1: the key holds the names with their values
+    task = find_task(PLAN, "Note the variables the checks read")
+    roles = role_vars()
+
+    def key(more):
+        variables = dict({"_cassandra_config_check_vars": roles["_cassandra_config_check_vars"],
+                          "_cassandra_config_check_names": roles["_cassandra_config_check_names"],
+                          "inventory_hostname": "n"}, **more)
+        variables["_names"] = render(task["vars"]["_names"], **variables)
+        variables["_unread"] = render(task["vars"]["_unread"], **variables)
+        return render(task["ansible.builtin.set_fact"]["_cassandra_config_check_key"], **variables)
+    assert key(one) != key(other)
+
+
+def test_a_node_in_no_group_is_checked_on_its_own():
+    # audit round 3, B1: one not among the play's hosts when the groups were made (2.17+, an earlier failure handled)
+    checks = find_task(PLAN, "Check the variables of these nodes")
+    assert checks["when"] == "inventory_hostname in _cassandra_config_check_groups or inventory_hostname not in _grouped"
+    groups = {"n1": ["n1", "n2"]}
+    assert render(checks["vars"]["_cassandra_config_checked"], _cassandra_config_check_groups=groups,
+                  inventory_hostname="n3") == ["n3"]
+    rescue = next(t for t in checks["rescue"])
+    assert rescue["when"] == "ansible_failed_task.name | default('') in _checks"
+
+
 CHECKS_PLAYBOOK = """
 - hosts: all
   gather_facts: true
   any_errors_fatal: true  # (as apply_config's compare: audit round 2, A1)
-  tasks:
+  tasks:{before}
     - name: The checks
       ansible.builtin.include_role:
         name: community.cassandra.cassandra_config
         tasks_from: {tasks}
 """
+# (audit round 3, B1: an earlier failure of n3, handled: on 2.17+ the play's hosts shrink, its failed result stays)
+EARLIER = """
+    - name: An earlier failure of n3, handled
+      {fatal}block:
+        - name: A command that fails on n3
+          ansible.builtin.command: "false"
+          when: inventory_hostname == 'n3'
+      rescue:
+        - name: Handled
+          ansible.builtin.debug: {{msg: handled}}"""
 
 
-def run_checks(tmp_path, tasks, hosts):
+def run_checks(tmp_path, tasks, hosts, before=""):
     """checks.yml per node, or checks_once.yml, on local hosts with these variables -> (rc, output)."""
     from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
     lines = ["[c]"] + ["%s %s" % (h, " ".join("%s=%s" % kv for kv in v.items())) for h, v in hosts.items()]
     lines += ["[c:vars]", "ansible_connection=local", "ansible_python_interpreter=" + sys.executable,
               "cassandra_version=50x"]
     (tmp_path / "inv.ini").write_text("\n".join(lines) + "\n")
-    (tmp_path / "play.yml").write_text(CHECKS_PLAYBOOK.format(tasks=tasks))
+    (tmp_path / "play.yml").write_text(CHECKS_PLAYBOOK.format(tasks=tasks, before=before))
     return run_playbook(["-i", str(tmp_path / "inv.ini"), str(tmp_path / "play.yml")])
 
 
 def said(out):
-    """(the hosts a check stopped, the hosts a warning names), from the output of either run."""
-    stopped = set(re.findall(r"fatal: \[(n\d)\]", out))
-    named = set()
-    for line in re.findall(r'"msg": "([^"]*)"', out):
-        found = set(re.findall(r"\bn\d\b", line.split(":")[0]))
-        if line.startswith("WARNING"):
-            named |= found
-        elif found:
-            stopped |= found  # (once: the failure of the group names its nodes)
-    return stopped, named
+    """What the checks said, from the output of either run: {(the nodes it names, the variables it names)} of each
+    stop (a check's failure, its rescue's) and each warning; nothing else (the key's ignored failure, the earlier one)."""
+    found, task = set(), ""
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("TASK ["):
+            task = line
+            continue
+        if "cassandra_config :" not in task or "Note the variables the checks read" in task:
+            continue
+        failed = re.match(r"fatal: \[(n\d)\]: FAILED! => (.*)$", line)
+        msgs = []
+        if failed and not (i + 1 < len(lines) and lines[i + 1].startswith("...ignoring")):
+            text = re.search(r'"msg": "((?:[^"\\]|\\.)*)"', failed.group(2))
+            msgs.append((failed.group(1), text.group(1) if text else ""))
+        warned = re.match(r'\s+"msg": "(WARNING  .*)"$', line)
+        if warned:
+            msgs.append(("", warned.group(1)))
+        for host, text in msgs:
+            nodes = set(re.findall(r"\bn\d\b", text.split(":")[0])) or {host}
+            found.add((tuple(sorted(nodes)), tuple(sorted(set(re.findall(r"\bcassandra_\w+", text))))))
+    return found
+
+
+def per_node_said(found):
+    """the same, each stop or warning split by node (a group's said once for its nodes)."""
+    return set((node, names) for nodes, names in found for node in nodes)
 
 
 @pytest.mark.playbook
-@pytest.mark.parametrize("hosts", [
-    {"n1": {}, "n2": {"cassandra_heap_newsize": "800M"}},  # (audit A1: a warning for n2 only)
-    {"n1": {}, "n2": {"cassandra_disk_access_mode": "bogus"}},  # a refusal for n2 only
-    {"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {"cassandra_disk_access_mode": "bogus"}},  # for both
-    {"n1": {}, "n2": {}},  # nothing
-    {"n1": {}, "n2": {"cassandra_jvm17_max_gc_pause_millis": "300ms"}},  # (round 2, B2: a value looked up by name)
+@pytest.mark.parametrize("hosts, before", [
+    ({"n1": {}, "n2": {"cassandra_heap_newsize": "800M"}}, ""),  # (audit A1: a warning for n2 only)
+    ({"n1": {}, "n2": {"cassandra_disk_access_mode": "bogus"}}, ""),  # a refusal for n2 only
+    ({"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {"cassandra_disk_access_mode": "bogus"}}, ""),  # for both
+    ({"n1": {}, "n2": {}}, ""),  # nothing
+    ({"n1": {}, "n2": {"cassandra_jvm17_max_gc_pause_millis": "300ms"}}, ""),  # (round 2, B2: a value looked up by name)
     # (round 2, C1: n2's key not made, ignored: n2 checked on its own, n1's checks still run, its warning said)
-    {"n1": {"cassandra_heap_newsize": "800M"}, "n2": {"cassandra_heap_newsize": "{{ no_such_variable }}"}},
+    ({"n1": {"cassandra_heap_newsize": "800M"}, "n2": {"cassandra_heap_newsize": "{{ no_such_variable }}"}}, ""),
     # (round 2, A1: 2.17+ with any_errors_fatal, the healthy group's first node came to the rescue too)
-    {"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {"cassandra_disk_access_mode": "bogus"},
-     "n3": {"cassandra_rack": "r2"}, "n4": {"cassandra_rack": "r2"}},
+    ({"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {"cassandra_disk_access_mode": "bogus"},
+      "n3": {"cassandra_rack": "r2"}, "n4": {"cassandra_rack": "r2"}}, ""),
+    # (round 3, A1: the same value under other names: other variables, other verdicts)
+    ({"n1": {"cassandra_jvm17_parallel_gc_threads": "300ms"}, "n2": {"cassandra_jvm17_max_gc_pause_millis": "300ms"}}, ""),
+    ({"n1": {"cassandra_jvm17_max_gc_pause_millis": "300ms"}, "n2": {"cassandra_jvm11_max_gc_pause_millis": "300ms"}}, ""),
+    ({"n1": {"cassandra_env_extra_lines": "x"}, "n2": {"cassandra_logback_extra_lines": "x"}}, ""),
+    # (round 3, B1: an earlier failure of n3, handled, the play going on; and the same with its own any_errors_fatal)
+    ({"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {}, "n3": {}}, EARLIER.format(fatal="")),
+    ({"n1": {}, "n2": {}, "n3": {"cassandra_heap_newsize": "800M"}}, EARLIER.format(fatal="")),
+    ({"n1": {"cassandra_disk_access_mode": "bogus"}, "n2": {}, "n3": {}},
+     EARLIER.format(fatal="any_errors_fatal: false\n      ")),
 ])
-def test_once_or_per_node_the_checks_say_the_same(tmp_path, hosts):
-    per_node = said(run_checks(tmp_path, "checks.yml", hosts)[1])
-    once = said(run_checks(tmp_path, "checks_once.yml", hosts)[1])
-    assert once == per_node
+def test_once_or_per_node_the_checks_say_the_same(tmp_path, hosts, before):
+    from ansible.release import __version__
+    per_node = per_node_said(said(run_checks(tmp_path, "checks.yml", hosts, before)[1]))
+    once = per_node_said(said(run_checks(tmp_path, "checks_once.yml", hosts, before)[1]))
+    if __version__.startswith("2.16."):
+        # (round 3, B2: on 2.16 the other groups' first nodes finish their checks before the stop: a grouped run can
+        # say more, all true)
+        assert per_node <= once
+    else:
+        assert once == per_node
 
 
 def test_apply_full_compares_as_before_the_gate():
@@ -777,8 +861,10 @@ def test_the_users_files_stop_says_why_and_the_way_out():
     # audit B4: an operator stop (cassandra_output), its cause, then its way out
     stop = find_task(load_tasks(os.path.join(TASKS, "access_plan.yml")), "Stop when the users' files could not be compared")
     assert stop["vars"]["cassandra_output"] is True
-    lines = [render(line, inventory_hostname="n2", _read={"error": "KeyError: 'x'"}) for line in stop["vars"]["_said"]]
-    assert lines[0].endswith("could not be compared: KeyError: 'x'") and lines[-1].startswith("WAY OUT  ")
+    lines = [render(line, inventory_hostname="n2", _read={"error": "KeyError: 'x'"}, _answered=True,
+                    _cassandra_config_python="python3") for line in stop["vars"]["_said"]]
+    assert lines == ["n2: the users' ~/.cassandra files (cqlsh, nodetool) could not be compared",
+                     "the compare said: KeyError: 'x'", "WAY OUT  fix what it says on n2, then run again"]
 
 
 def test_the_old_progress_files_cleanup_keeps_the_parts_of_a_live_run(tmp_path):
@@ -822,7 +908,51 @@ def test_a_users_files_compare_that_crashed_is_said():
     assert read["failed_when"] is False
     stop = find_task(plan, "Stop when the users' files could not be compared")
     crashed = {"rc": 127, "stdout": "", "stderr": "Traceback...\n/usr/bin/python3.11: not found"}
-    said = render(stop["vars"]["_read"], cassandra_config_users_read=crashed, _nl="\n")
+    variables = dict(cassandra_config_users_read=crashed, _nl="\n", inventory_hostname="n2", _cassandra_config_python="/usr/bin/python3")
+    variables["_answered"] = render(stop["vars"]["_answered"], **variables)
+    said = render(stop["vars"]["_read"], **variables)
     assert said == {"error": "/usr/bin/python3.11: not found"}
-    assert render(stop["vars"]["_read"], cassandra_config_users_read={"rc": 0, "stdout": '{"changes": []}'},
-                  _nl="\n") == {"changes": []}
+    lines = [render(line, _read=said, **variables) for line in stop["vars"]["_said"]]
+    assert lines == ["n2: the users' ~/.cassandra files (cqlsh, nodetool) could not be compared",
+                     "/usr/bin/python3 failed: /usr/bin/python3.11: not found",
+                     "WAY OUT  make /usr/bin/python3 run on n2, then run again"]
+    # (round 3, C4: nothing on stderr: said so)
+    quiet = dict(variables)
+    quiet["cassandra_config_users_read"] = {"rc": 1, "stdout": "", "stderr": ""}
+    assert render(stop["vars"]["_read"], **quiet) == {"error": "no error output, rc 1"}
+    answered = dict(variables, _answered=True)
+    answered["cassandra_config_users_read"] = {"rc": 0, "stdout": '{"changes": []}'}
+    assert render(stop["vars"]["_read"], **answered) == {"changes": []}
+
+
+def jinja_var_lookups(value):
+    """The calls of the vars and varnames lookups in a task's Jinja, any spelling (lookup, query, q; the plugin's
+    short or full name): their count."""
+    from jinja2 import Environment, nodes
+    if isinstance(value, dict):
+        return sum(jinja_var_lookups(v) for v in value.values())
+    if isinstance(value, list):
+        return sum(jinja_var_lookups(v) for v in value)
+    if not isinstance(value, str) or not ("{{" in value or "{%" in value):
+        return 0
+    env = Environment(extensions=["jinja2.ext.do"])
+    count = 0
+    for call in env.parse(value).find_all(nodes.Call):
+        name = getattr(call.node, "name", "")
+        first = call.args[0] if call.args else None
+        if name in ("lookup", "query", "q") and isinstance(first, nodes.Const) and str(first.value) in (
+                "vars", "varnames", "ansible.builtin.vars", "ansible.builtin.varnames"):
+            count += 1
+    return count
+
+
+def test_the_checks_look_variables_up_only_as_the_name_test_reads():
+    # audit round 3, C1: a lookup of a variable by name in another spelling (q('vars', ...)) would escape the regex
+    # of test_every_name_the_checks_build_is_in_their_key: every one parsed here is one that test reads
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        text = f.read()
+    parsed = jinja_var_lookups(yaml.safe_load(text))
+    read = len(re.findall(r"lookup\('ansible\.builtin\.vars', ", text)) + len(
+        re.findall(r"query\('ansible\.builtin\.varnames', ", text))
+    assert parsed == read and parsed > 0
+    assert jinja_var_lookups("{{ q('vars', 'cassandra_' ~ x) }}") == 1  # (the parse sees other spellings)

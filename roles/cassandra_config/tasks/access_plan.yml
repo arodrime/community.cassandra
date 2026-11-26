@@ -157,14 +157,18 @@
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
-        # (the script's answer; its Python failing: no answer, its last line of error)
+        # (the script's answer: a Python error of its own, said as such; no answer: its Python failing, the last line
+        # it wrote on stderr, or none)
+        _answered: "{{ cassandra_config_users_read.stdout | default('') is match('[{]') }}"
         _read: >-
-          {{ cassandra_config_users_read.stdout | from_json if cassandra_config_users_read.stdout | default('') is match('[{]')
+          {{ cassandra_config_users_read.stdout | from_json if _answered | bool
              else {'error': (cassandra_config_users_read.stderr | default('', true) | trim).split(_nl) | last
-                            | default('rc ' ~ cassandra_config_users_read.rc | default('?'), true)} }}
+                            | default('no error output, rc ' ~ cassandra_config_users_read.rc | default('?'), true)} }}
         _said:
-          - "the users' ~/.cassandra files (cqlsh, nodetool) could not be compared: {{ _read.error }}"
-          - "WAY OUT  fix what it says on {{ inventory_hostname }} (the users of cassandra_cqlsh_credentials, their home), then run again"
+          - "{{ inventory_hostname }}: the users' ~/.cassandra files (cqlsh, nodetool) could not be compared"
+          - "{{ ('the compare said: ' if _answered | bool else _cassandra_config_python ~ ' failed: ') ~ _read.error }}"
+          - "{{ 'WAY OUT  fix what it says on ' ~ inventory_hostname ~ ', then run again' if _answered | bool
+                else 'WAY OUT  make ' ~ _cassandra_config_python ~ ' run on ' ~ inventory_hostname ~ ', then run again' }}"
       when: _read.error is defined
 
     # (said as the JMX files are: written whole, never their content)
