@@ -202,7 +202,7 @@
           {%- endfor -%}
           {{ l }}
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
-        cassandra_screen_question: "Move {{ _todo | join(', ') }} of {{ _cluster }} to Java {{ cassandra_java_version }}?"
+        cassandra_screen_question: "Move {{ _todo | join(', ') }} to Java {{ cassandra_java_version }}?"
         _no_return: "{{ _todo | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars | default({})) }}"
         cassandra_screen:
           operation: update_java

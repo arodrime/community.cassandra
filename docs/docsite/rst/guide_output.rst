@@ -57,7 +57,8 @@ Conventions
              (the operation itself goes on, unwatched; run it inside tmux or
              screen)
 
-    Add node4, node5 into dc1 of prod? Answer yes or no:
+    Cluster: prod
+    Add node4, node5 into dc1? Answer yes or no:
 
   The cluster's posture (no authentication on a reachable address, the heap, a failure policy ``ignore``...) is not
   the operation's business: ``health_check`` says it, in its ``SETTINGS TO REVIEW`` block.

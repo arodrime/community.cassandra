@@ -207,9 +207,10 @@
       vars:
         cassandra_screen_session_warning: true
         # the datacenters the nodes leave, the cluster: the title and the question say the same thing
-        _where: "{{ _nodes | selectattr('name', 'in', _leaving) | map(attribute='dc') | unique | sort | join(', ') ~ ' of ' ~ _cluster_name }}"
+        _where: "{{ _dcs ~ ' of ' ~ _cluster_name }}"
+        _dcs: "{{ _nodes | selectattr('name', 'in', _leaving) | map(attribute='dc') | unique | sort | join(', ') }}"
         _cluster_name: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
-        cassandra_screen_question: "Remove {{ _leaving | join(', ') }} from {{ _where }}?"
+        cassandra_screen_question: "Remove {{ _leaving | join(', ') }} from {{ _dcs }}?"  # (the question names the cluster)
         cassandra_screen: >-
           {{ _dn_screen | combine({'summary': _leaving | join(', ') ~ ' from ' ~ _where,
                                   'intro': ([('First, the seed lists drop ' ~ _dn_seed_step | join(', ') ~ ': the seed list ('

@@ -158,6 +158,32 @@ def test_no_terminal_fails_at_once(tmp_path):
     assert went_on(run.stdout) == 0
 
 
+def test_the_question_names_the_cluster(tmp_path):
+    """(2026-11-26) every confirmation names the cluster, on a line of its own above the question: the shared task
+    says it (the banner's name, else cassandra_cluster_name), no caller can forget it."""
+    import yaml
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "confirm_ask.yml")
+    with open(path, encoding="utf-8") as f:
+        ask = next(t for t in yaml.safe_load(f) if t["name"] == "Confirm the operation")
+
+    def prompt(**variables):
+        variables = dict(dict(_cassandra_confirm_tries=1, cassandra_confirm_prompt="Remove node7?", hostvars={"localhost": {}}),
+                         **variables)
+        variables.update((k, render_with(v, variables)) for k, v in ask["vars"].items() if k.startswith("_"))
+        return render_with(ask["ansible.builtin.pause"]["prompt"], variables)
+
+    assert prompt(cassandra_cluster_name="test_cluster") == "Cluster: test_cluster\nRemove node7? Answer yes or no"
+    assert prompt(cassandra_cluster_name="test_cluster", hostvars={"localhost": {"_cassandra_cluster_shown": "other"}}) == (
+        "Cluster: other\nRemove node7? Answer yes or no")  # the banner's (the group the run is on)
+    assert prompt() == "Remove node7? Answer yes or no"  # no name known: none said
+    assert prompt(_cassandra_confirm_tries=2, cassandra_cluster_name="test_cluster") == "Please answer yes or no"
+    # the variable that skips it, the caller's (cassandra_config: cassandra_config_confirm)
+    argv, env = command(tmp_path, "-e", "_cassandra_confirm_skip=cassandra_config_confirm")
+    run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
+    assert "-e cassandra_config_confirm=false" in run.stdout and "Cluster:" not in run.stdout, run.stdout
+
+
 def test_no_terminal_and_confirm_false_goes_on(tmp_path):
     argv, env = command(tmp_path, "-e", "cassandra_operation_confirm=false")
     run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)

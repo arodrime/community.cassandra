@@ -1,6 +1,11 @@
 ---
-# One question of confirm.yml. It includes itself again after an answer that
-# is neither yes nor no (pause has no until on every ansible-core version).
+# One question of confirm.yml (every confirmation of the collection asks
+# here). It names the cluster itself, on a line above the question (the
+# banner's name, else cassandra_cluster_name): the callers' questions do not.
+# It includes itself again after an answer that is neither yes nor no (pause
+# has no until on every ansible-core version). _cassandra_confirm_skip: the
+# variable that skips the question, said without a terminal (default
+# cassandra_operation_confirm).
 - name: Count the answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: "{{ _cassandra_confirm_tries | int + 1 }}"
@@ -9,11 +14,15 @@
 # (pause ends the prompt line with ':', the mark of a question)
 - name: Confirm the operation
   ansible.builtin.pause:
-    prompt: "{{ (cassandra_confirm_prompt ~ ' Answer yes or no') if _cassandra_confirm_tries | int == 1 else 'Please answer yes or no' }}"
+    prompt: >-
+      {{ (('Cluster: ' ~ _cluster ~ _nl if _cluster else '') ~ cassandra_confirm_prompt ~ ' Answer yes or no')
+         if _cassandra_confirm_tries | int == 1 else 'Please answer yes or no' }}
   register: _cassandra_confirm_reply
   run_once: true
   vars:
     cassandra_output_gap: true  # a rule above the question (ops callback)
+    _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
 
 - name: Read the answer
   ansible.builtin.set_fact:
@@ -24,7 +33,7 @@
   ansible.builtin.fail:
     msg: >-
       No terminal to answer the confirmation on, nothing changed. Run it from a terminal,
-      or add -e cassandra_operation_confirm=false to go on without asking.
+      or add -e {{ _cassandra_confirm_skip | default('cassandra_operation_confirm') }}=false to go on without asking.
   run_once: true
   when: _cassandra_confirm_answer == 'no_terminal'
   vars:

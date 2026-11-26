@@ -450,16 +450,19 @@
             quiet: true
           run_once: true
 
+        # (a typed answer, not yes or no: asked here, the cluster named as confirm_ask.yml names it)
         - name: Type the address of the node to assassinate
           ansible.builtin.pause:
             prompt: |-
-              DATA LOSS: assassinate takes {{ _dead_address }} out of gossip without streaming: the data only it held is LOST for good.
+              {{ ('Cluster: ' ~ _cluster ~ _nl) if _cluster else '' }}DATA LOSS: assassinate takes {{ _dead_address }} out of gossip without streaming: the data only it held is LOST for good.
               Type its address to go on, anything else stops
           register: _cassandra_assassinate_typed
           run_once: true
           when: _given == ''
           vars:
             cassandra_output_gap: true  # a rule above the question (ops callback)
+            _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
+            _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
 
         - name: The address typed is the dead node's
           ansible.builtin.assert:

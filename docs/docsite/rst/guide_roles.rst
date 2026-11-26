@@ -332,8 +332,9 @@ the addresses only (a site without reverse DNS). ``cassandra_status_raw: true`` 
 Risky operations show one plan first, the same layout for each: the title (the operation in capitals, then what it
 does to whom, where: ``ADD NODE  node4, node5 into dc1 of orders``), how it does it, a table of the nodes concerned
 (when the operation works node by node) and the notes under it, then the warnings together, each one labelled
-(``WARNING  replication: ...``, two lines at most), just before the question, which says the same thing as the title
-(``Add node4, node5 into dc1 of orders? Answer yes or no:``); one blank line between two blocks. ``yes`` (or ``y``)
+(``WARNING  replication: ...``, two lines at most), just before the question, which says the same thing as the title,
+the cluster on a line of its own above it (``Cluster: orders``, then ``Add node4, node5 into dc1? Answer yes or
+no:``; every confirmation of the collection names it so); one blank line between two blocks. ``yes`` (or ``y``)
 goes on, ``no`` (or ``n``) stops, any other answer asks again, three times at most. ``cassandra_operation_confirm: false`` skips the question, for runs without a
 terminal; without one, a run that would ask fails at once. ``--check`` shows the screen, says that nothing will be
 changed and asks nothing (``add_node`` with ``cassandra_token_auto: true`` follows bisect instead of asking); the
@@ -609,6 +610,7 @@ example (replacing the seed ``node2`` by ``node5``):
     cleanup:    of the nodes that hand data over: its command is printed after the adds (topology runs none, the removals move data again)
 
     WARNING  the seeds will change on every node: 10.0.0.1,10.0.0.2 -> 10.0.0.1,10.0.0.5 (from cassandra_seeds in the inventory)
+    Cluster: my_cluster
     Run these 3 steps? Answer yes or no:
 
 It asks once; each step then shows its own screen as it starts, without a question. ``--check`` shows the same plan,
@@ -1013,8 +1015,8 @@ Before writing anything, :ansplugin:`community.cassandra.cassandra_config#role` 
 directory on the node and shows a diff against the live files. Passwords are shown as ``****``.
 
 On a node that is not blank (a system keyspace in its data directories, or Cassandra running: see where a node
-stands in the operator output guide), it then asks for confirmation (type ``yes``), once for all the hosts of the
-batch. Without a terminal to answer, the run fails instead of applying. ``cassandra_config_confirm: false`` applies
+stands in the operator output guide), it then asks for confirmation (``yes`` or ``y``; the cluster named above the question, as every confirmation of the
+collection), once for all the hosts of the batch. Without a terminal to answer, the run fails instead of applying. ``cassandra_config_confirm: false`` applies
 without asking, ``true`` always asks. It refuses outright to change the settings a node keeps for life (see
 `Inventory`_) unless ``cassandra_config_force_identity_change: true``.
 

@@ -8,6 +8,7 @@ __metaclass__ = type
 
 import json
 import os
+import re
 import select
 import subprocess
 import time
@@ -55,9 +56,9 @@ def run(tmp_path, **variables):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
-def run_typed(tmp_path, answer):
+def run_typed(tmp_path, answer, **variables):
     """On a terminal (a pty), the answer typed at the question: rc, output."""
-    argv, env = playbook(tmp_path)
+    argv, env = playbook(tmp_path, **variables)
     pid, fd = pty.fork()
     if pid == 0:  # the child
         os.chdir(str(tmp_path))
@@ -128,3 +129,11 @@ def test_typed_on_a_terminal(tmp_path, answer, goes_on):
     rc, out = run_typed(tmp_path, answer)
     assert "DATA LOSS: assassinate takes 10.0.0.14 out of gossip without streaming" in out, out
     assert (rc == 0 and "WENT ON" in out) if goes_on else (rc != 0 and "WENT ON" not in out), out
+
+
+@pytest.mark.playbook
+def test_the_question_names_the_cluster(tmp_path):
+    """(2026-11-26) every confirmation names the cluster, on a line of its own above it, as confirm_ask.yml does."""
+    rc, out = run_typed(tmp_path, ADDRESS, cassandra_cluster_name="test_cluster")
+    assert rc == 0 and "WENT ON" in out, out
+    assert re.search(r"Cluster: test_cluster\r?\nDATA LOSS: assassinate takes 10.0.0.14", out), out

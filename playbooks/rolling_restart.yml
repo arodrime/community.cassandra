@@ -69,7 +69,7 @@
         _rack: "{{ cassandra_rolling_mode | default('node') == 'rack' }}"
         _nodes: "{{ ansible_play_hosts | community.cassandra.cassandra_node_list }}"
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
-        cassandra_screen_question: "Restart {{ _nodes }} of {{ _cluster }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}?"
+        cassandra_screen_question: "Restart {{ _nodes }}, {{ 'rack by rack' if _rack | bool else 'one node at a time' }}?"
         cassandra_screen_session_warning: true
         _no_return: "{{ ansible_play_hosts | community.cassandra.cassandra_storage_mode_restarts_into_none(hostvars | default({})) }}"
         cassandra_screen:

@@ -274,6 +274,8 @@ def test_every_operation_that_asked_writes_the_config_without_a_second_question(
 PLAYBOOK = """
 - hosts: all
   gather_facts: false
+  vars:
+    cassandra_cluster_name: test_cluster
   tasks:
     - name: What the role found on each node (read from the others through hostvars)
       ansible.builtin.set_fact:
@@ -292,10 +294,12 @@ PLAYBOOK = """
 
 
 def confirm_tasks():
-    """The role's two tasks, as they are in tasks/main.yml."""
-    ask, check = task("Confirm config changes"), task("Stop unless the changes were confirmed")
-    assert ask["register"] == "cassandra_config_answer"
-    return [ask, check]
+    """The role's question, as it is in tasks/confirm.yml: the collection's shared one (confirm_ask.yml)."""
+    start, ask, check = (task("Start the count of answers"), task("Confirm config changes"),
+                         task("Stop unless the changes were confirmed"))
+    assert ask["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_operation",
+                                                   "tasks_from": "confirm_ask.yml"}
+    return [start, ask, check]
 
 
 def run_in_terminal(tmp_path, answer):
@@ -318,7 +322,7 @@ def run_in_terminal(tmp_path, answer):
             if not data:
                 break
             output += data
-        if not sent and b"Type 'yes' to apply" in output:
+        if not sent and b"Answer yes or no" in output:
             time.sleep(1)  # pause drops what was typed before it reads
             os.write(fd, answer.encode() + b"\r")
             sent = True
@@ -331,7 +335,8 @@ def run_in_terminal(tmp_path, answer):
 def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "yes")
     assert rc == 0, output
-    assert output.count("Type 'yes' to apply") == 1  # one question for the batch
+    assert output.count("Answer yes or no") == 1  # one question for the batch
+    assert "Cluster: test_cluster" in output  # (the shared question names the cluster)
     assert re.search(r"node1: cassandra.yaml\r?\n\s*node2: cassandra.yaml", output), output
     assert len(re.findall(r'"msg": "went on"', output)) == 2, output
     assert "not confirmed" not in output
@@ -341,7 +346,7 @@ def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
 def test_no_stops_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "no")
     assert rc != 0
-    assert sorted(set(re.findall(r"Config changes not confirmed on (node\d)", output))) == ["node1", "node2"], output
+    assert "Stopped at your request, nothing changed." in output, output
     assert "went on" not in output
 
 

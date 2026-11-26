@@ -35,8 +35,8 @@ initialized (a `system` keyspace in `cassandra_data_file_directories`, its
 `local_system_data_file_directory`, `/var/lib/cassandra/data` or a tarball's
 `data/data`, or any absolute path written in its live `cassandra.yaml`
 outside comment lines, relative ones excepted; a live file it cannot read;
-or Cassandra running) is only changed after you type `yes` at a single
-prompt listing every host and file concerned; a first install is not
+or Cassandra running) is only changed after you answer `yes` (or `y`) at a single
+prompt naming the cluster and listing every host and file concerned; a first install is not
 blocked. `true` asks whenever a file changes, `false` never does. The JMX
 users files are written without that preview. With no terminal to answer
 (CI, AWX), a required confirmation fails the run.

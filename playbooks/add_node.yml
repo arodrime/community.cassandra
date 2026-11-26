@@ -373,13 +373,13 @@
         cassandra_screen_session_warning: true
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(_p.cassandra_cluster_name) }}"
         # the datacenters the new nodes join, the cluster: the title and the question say the same thing
-        _where: >-
-          {{ (_new or _joining) | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | sort | join(', ')
-             ~ ' of ' ~ _cluster }}
+        _where: "{{ _dcs ~ ' of ' ~ _cluster }}"
+        _dcs: "{{ (_new or _joining) | map('extract', hostvars, ['_cassandra_preflight', 'cassandra_dc']) | unique | sort | join(', ') }}"
+        # (the question names the cluster: confirm_ask.yml)
         cassandra_screen_question: >-
-          {{ ('Add ' ~ _new | join(', ') ~ ' into ' ~ _where ~ '?') if _new
-             else ('Wait for ' ~ _joining | join(', ') ~ ' of ' ~ _cluster ~ '?') if _joining
-             else 'Run the cleanup of ' ~ _cluster ~ '?' }}
+          {{ ('Add ' ~ _new | join(', ') ~ ' into ' ~ _dcs ~ '?') if _new
+             else ('Wait for ' ~ _joining | join(', ') ~ '?') if _joining
+             else 'Run the cleanup?' }}
         cassandra_screen:
           operation: add_node
           summary: >-

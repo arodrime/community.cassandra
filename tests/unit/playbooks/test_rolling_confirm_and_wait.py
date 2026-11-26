@@ -69,10 +69,10 @@ def test_rolling_restart_screen_and_question():
     assert text.startswith("ROLLING RESTART  node1..node3 of Orders, one node at a time\n"
                            "  Drains and restarts each node in turn, the cluster checked healthy before and\n")
     assert " ".join(("WARNING  " + SESSION).split()) in " ".join(text.split()) and max(len(x) for x in text.split("\n")) <= 79
-    assert question == "Restart node1..node3 of Orders, one node at a time?"
+    assert question == "Restart node1..node3, one node at a time?"  # (confirm_ask.yml names the cluster)
     assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True)[0].split())
     rack, question = screen_text("rolling_restart.yml", mode="rack")
-    assert "rack by rack" in rack and question == "Restart node1..node3 of Orders, rack by rack?"
+    assert "rack by rack" in rack and question == "Restart node1..node3, rack by rack?"
     assert "Refused before any restart if a rack down would take down more than one replica" in " ".join(rack.split())
     assert "skipped (cassandra_rolling_resume)" in " ".join(screen_text("rolling_restart.yml", resume=True, mode="rack")[0].split())
     # --check and cassandra_operation_confirm false: the screen, no question (said on the screen)
@@ -82,11 +82,12 @@ def test_rolling_restart_screen_and_question():
 
 
 def test_the_title_and_the_question_name_the_group_of_the_first_line():
-    # the run's first line names the inventory group (cluster_banner.yml): the title and the question too
+    # the run's first line names the inventory group (cluster_banner.yml): the title too (the question: the shared
+    # confirm_ask.yml says it above it, not the caller)
     shown = {"hostvars": {"localhost": {"_cassandra_cluster_shown": "orders_eu"}}}
     for playbook in ("rolling_restart.yml", "rolling_reboot.yml"):
         text, question = screen_text(playbook, **shown)
-        assert " of orders_eu, " in text.split("\n")[0] and " of orders_eu, " in question, (playbook, text, question)
+        assert " of orders_eu, " in text.split("\n")[0] and "orders_eu" not in question, (playbook, text, question)
 
 
 def test_the_screens_say_it_with_single_spaces():
@@ -101,7 +102,7 @@ def test_the_screens_say_it_with_single_spaces():
 def test_rolling_reboot_screen_and_question():
     text, question = screen_text("rolling_reboot.yml")
     assert text.startswith("ROLLING REBOOT  node1..node3 of Orders, one host at a time")
-    assert question == "Reboot node1..node3 of Orders, one host at a time?"
+    assert question == "Reboot node1..node3, one host at a time?"
 
 
 def test_the_wait_is_for_nodes_down_and_ports_only():
