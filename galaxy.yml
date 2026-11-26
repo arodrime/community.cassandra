@@ -1,6 +1,6 @@
 namespace: community
 name: cassandra
-version: 3.0.0-rc2
+version: 3.0.0-rc3
 readme: README.md
 authors: Rhys Campbell
 description: null
