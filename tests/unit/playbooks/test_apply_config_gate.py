@@ -20,7 +20,7 @@ import yaml
 
 from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_gate import (
     PARTS, cassandra_apply_gate_lines, cassandra_apply_only, cassandra_apply_only_stops, cassandra_check_groups,
-    cassandra_apply_resume_refusal, cassandra_config_user_files, cassandra_config_user_request)
+    cassandra_apply_resume_refusal, cassandra_config_user_files, cassandra_cqlsh_credential_refusals, cassandra_config_user_request)
 from ansible_collections.community.cassandra.tests.unit.helpers import TOP, render
 from ansible_collections.community.cassandra.tests.unit.task_files import find_play, find_task, load_tasks
 
@@ -749,7 +749,22 @@ def test_a_node_in_no_group_is_checked_on_its_own():
     assert render(checks["vars"]["_cassandra_config_checked"], _cassandra_config_check_groups=groups,
                   inventory_hostname="n3") == ["n3"]
     rescue = next(t for t in checks["rescue"])
-    assert rescue["when"] == "ansible_failed_task.name | default('') in _checks"
+    # (round 4, B1: fails closed: lets a node go on only when its checks ended, or no failure of its own came since)
+    assert rescue["when"] == ["not _cassandra_config_checks_ended | bool",
+                              "ansible_failed_result | default(none) | to_json | hash('sha1') != _cassandra_config_failed_before"]
+    assert [t["name"] for t in checks["block"]][-1] == "Note the checks of these nodes ended"
+
+
+def test_the_checks_are_plain_top_level_tasks():
+    # round 4, B1: every check a task of its own at the top of checks.yml, its name plain text (no block, no include:
+    # a check's failure is said under its name)
+    with open(os.path.join(TASKS, "checks.yml"), encoding="utf-8") as f:
+        tasks = yaml.safe_load(f)
+    for task in tasks:
+        assert not set(task) & {"block", "rescue", "always", "include_tasks", "ansible.builtin.include_tasks",
+                                "import_tasks", "ansible.builtin.import_tasks", "include_role",
+                                "ansible.builtin.include_role"}, task.get("name")
+        assert "{{" not in task.get("name", "{{"), task.get("name")
 
 
 CHECKS_PLAYBOOK = """
@@ -810,6 +825,11 @@ def said(out):
     return found
 
 
+def recap_failed(out):
+    """The hosts the recap says failed."""
+    return set(re.findall(r"^(n\d)\s+: .*failed=[1-9]", out, re.M))
+
+
 def per_node_said(found):
     """the same, each stop or warning split by node (a group's said once for its nodes)."""
     return set((node, names) for nodes, names in found for node in nodes)
@@ -839,8 +859,12 @@ def per_node_said(found):
 ])
 def test_once_or_per_node_the_checks_say_the_same(tmp_path, hosts, before):
     from ansible.release import __version__
-    per_node = per_node_said(said(run_checks(tmp_path, "checks.yml", hosts, before)[1]))
-    once = per_node_said(said(run_checks(tmp_path, "checks_once.yml", hosts, before)[1]))
+    rc_per_node, out_per_node = run_checks(tmp_path, "checks.yml", hosts, before)
+    rc_once, out_once = run_checks(tmp_path, "checks_once.yml", hosts, before)
+    per_node, once = per_node_said(said(out_per_node)), per_node_said(said(out_once))
+    # (round 4, B1: the run stops, or not, the same way: rc, and a failed host in the recap when the checks failed)
+    assert rc_once == rc_per_node
+    assert bool(recap_failed(out_once)) == bool(recap_failed(out_per_node))
     if __version__.startswith("2.16."):
         # (round 3, B2: on 2.16 the other groups' first nodes finish their checks before the stop: a grouped run can
         # say more, all true)
@@ -956,3 +980,26 @@ def test_the_checks_look_variables_up_only_as_the_name_test_reads():
         re.findall(r"query\('ansible\.builtin\.varnames', ", text))
     assert parsed == read and parsed > 0
     assert jinja_var_lookups("{{ q('vars', 'cassandra_' ~ x) }}") == 1  # (the parse sees other spellings)
+
+
+def test_bad_cqlsh_credentials_are_refused_before_they_are_rendered():
+    # round 4, C1: a missing field said with the entry (not "censored" by the no_log task that renders them)
+    plan = load_tasks(os.path.join(TASKS, "access_plan.yml"))
+    names = [t["name"] for t, dummy in walk(plan)]
+    assert names.index("Refuse cqlsh credentials without an OS user, a username or a password") < names.index(
+        "Compare the users' ~/.cassandra files with the role's")
+    refuse = find_task(plan, "Refuse cqlsh credentials without an OS user, a username or a password")
+    assert "no_log" not in refuse and refuse["vars"]["cassandra_output"] is True
+    said = cassandra_cqlsh_credential_refusals([{"os_user": "root", "username": "u", "password": "secret"},
+                                                {"os_user": "ops", "password": "secret"}, {"username": "u"}, "x"])
+    assert said == ["  entry 2 (ops): no username", "  entry 3 (no os_user): no os_user, no password",
+                    "  entry 4 (no os_user): no os_user, no username, no password"]
+    assert not any("secret" in line for line in said)
+    lines = render(refuse["vars"]["_said"], _wrong=said)
+    assert lines[0] == "cassandra_cqlsh_credentials: entries the role cannot write:" and lines[-1].startswith("WAY OUT  ")
+
+
+@pytest.mark.parametrize("given", ["all,linus", "ALL,linus", "linus,All"])
+def test_a_typo_with_all_is_told_to_give_all(given):
+    # round 4, C2
+    assert cassandra_apply_only(given, "CMD")["refused"][-1] == "  CMD -e apply_only=all"

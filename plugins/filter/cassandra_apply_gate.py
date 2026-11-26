@@ -8,6 +8,7 @@ cassandra_apply_only_stops: what a run restricted to some parts cannot leave out
 the series, the AxonOps agent cassandra-env.sh loads).
 cassandra_config_user_files, cassandra_config_user_request: the files of the users' ~/.cassandra cassandra_config
 writes, and its plan's request to compare them on the node.
+cassandra_cqlsh_credential_refusals: the cqlsh credentials entries cassandra_config cannot write.
 cassandra_check_groups: the nodes whose cassandra_config checks read the same values, checked once.
 cassandra_apply_resume_refusal: a resume with other parts than the interrupted run's, refused.
 cassandra_apply_gate_lines: the lines the report of the run says of the compare: the nodes whose config the
@@ -46,9 +47,11 @@ def cassandra_apply_only(value, command=""):
     if not names or names == ["all"]:  # (all: every part, as without apply_only; said so to resume a run)
         return {"parts": list(PARTS), "left_out": [], "refused": []}
     unknown = [n for n in names if n not in PARTS and n != "all"]
-    way_out = ["WAY OUT  run:", "  %s -e apply_only=%s" % (
-        command or "ansible-playbook community.cassandra.apply_config",
-        ",".join(["config"] + [n for n in PARTS if n in names and n != "config"]))]
+    # (the parts given that are parts, config first; all among them, in any case: all)
+    given = "all" if any(n.lower() == "all" for n in names) else ",".join(
+        ["config"] + [n for n in PARTS if n in names and n != "config"])
+    command = command or "ansible-playbook community.cassandra.apply_config"
+    way_out = ["WAY OUT  run:", "  %s -e apply_only=%s" % (command, given)]
     if unknown:
         refused = ["apply_only: not a part of apply_config:"] + ["  " + n for n in unknown] + ["its parts:"] + [
             "  " + p for p in PARTS] + ["  all (every part, given alone)"] + way_out
@@ -176,6 +179,18 @@ def cassandra_config_user_request(files, texts):
     return [{"user": u, "files": users[u]} for u in order]
 
 
+def cassandra_cqlsh_credential_refusals(credentials):
+    """cassandra_cqlsh_credentials -> a line for each entry cassandra_config cannot write (no os_user, username or
+    password: by its place and its os_user, never its password), [] when it can write them all."""
+    out = []
+    for index, entry in enumerate(credentials or [], 1):
+        entry = entry if isinstance(entry, dict) else {}
+        missing = [k for k in ("os_user", "username", "password") if entry.get(k) in (None, "")]
+        if missing:
+            out.append("  entry %d (%s): no %s" % (index, entry.get("os_user") or "no os_user", ", no ".join(missing)))
+    return out
+
+
 class FilterModule(object):
     def filters(self):
         return {
@@ -185,5 +200,6 @@ class FilterModule(object):
             "cassandra_apply_resume_refusal": cassandra_apply_resume_refusal,
             "cassandra_check_groups": cassandra_check_groups,
             "cassandra_config_user_files": cassandra_config_user_files,
+            "cassandra_cqlsh_credential_refusals": cassandra_cqlsh_credential_refusals,
             "cassandra_config_user_request": cassandra_config_user_request,
         }

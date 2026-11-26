@@ -125,6 +125,20 @@
     - cassandra_cqlsh_credentials | length > 0 or cassandra_jmx_ssl_enabled | bool
     - _cassandra_config_user_files_compare | default(true) | bool
   block:
+    # (before they are rendered, in a task that hides its values: a missing field would only say "censored")
+    - name: Refuse cqlsh credentials without an OS user, a username or a password
+      ansible.builtin.fail:
+        msg: "{{ ('cassandra_config  ' ~ inventory_hostname) | community.cassandra.cassandra_refused(_said) | join(_nl) }}"
+      when: _wrong | length > 0
+      vars:
+        cassandra_output: true  # a verdict: its msg as is (ops callback)
+        _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+        # (each entry by its place and its os_user, never its password)
+        _wrong: "{{ cassandra_cqlsh_credentials | community.cassandra.cassandra_cqlsh_credential_refusals }}"
+        _said: >-
+          {{ ['cassandra_cqlsh_credentials: entries the role cannot write:'] + _wrong
+             + ['WAY OUT  give each entry its os_user, username and password, then run again'] }}
+
     - name: Compare the users' ~/.cassandra files with the role's
       ansible.builtin.command:
         argv:

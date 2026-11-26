@@ -1180,8 +1180,8 @@ that a node needs stops it too: a newer release of its series to install (``inst
 says). Each stop gives the command to run. A resumed run (``-e cassandra_rolling_resume=true``) must give the parts the
 interrupted one did (recorded next to its progress file, ``.parts``, written with it): other ones stop it before
 anything is written, with the command that resumes with them; a part a node needs, left out of a resume, stops it
-with the command that starts over with that part. A progress file with no record (a run of an earlier version, which
-applied every part) stops it too, with the two commands: resume with every part (``-e apply_only=all``), or start
+with the command that starts over with that part. A progress file with no record of the parts of the interrupted
+run stops it too, with the two commands: resume with every part (``-e apply_only=all``), or start
 over; a resume given ``-e apply_only`` there goes on, and its parts are recorded. ``all`` (every part) is given alone.
 
 ``apply_config`` covers the OS settings of ``cassandra_linux`` too (kernel settings, limits, transparent huge pages,

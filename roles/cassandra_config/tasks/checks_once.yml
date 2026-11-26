@@ -26,7 +26,16 @@
       {{ ansible_play_hosts | community.cassandra.cassandra_check_groups(hostvars) }}
   run_once: true
 
-# a check that fails stops the nodes of the group, its message naming them (its verdict is theirs)
+# a check that fails stops the nodes of the group, its message naming them (its verdict is theirs). The rescue
+# fails closed: it lets a node go on only when its checks ended (on ansible-core 2.17+ with any_errors_fatal a node
+# whose checks passed comes here too when another's failed), or when no failure of its own came since they started
+# (a node stopped in its checks by another's failure: no failed result, or the one of an earlier failure, handled)
+- name: Note the failure a node had before its checks
+  ansible.builtin.set_fact:
+    _cassandra_config_failed_before: "{{ ansible_failed_result | default(none) | to_json | hash('sha1') }}"
+    _cassandra_config_checks_ended: false
+  no_log: true  # (a sha1 of a result that may hold secrets)
+
 - name: Check the variables of these nodes
   when: inventory_hostname in _cassandra_config_check_groups or inventory_hostname not in _grouped
   vars:
@@ -36,16 +45,18 @@
   block:
     - name: Check the variables of these nodes
       ansible.builtin.include_tasks: checks.yml
+
+    - name: Note the checks of these nodes ended
+      ansible.builtin.set_fact:
+        _cassandra_config_checks_ended: true
   rescue:
-    # only a failure of checks.yml: on ansible-core 2.17+ with any_errors_fatal a node whose checks passed comes here
-    # too when another's failed, with no failed task, or with the one of an earlier failure of its own (handled)
     - name: Stop the nodes these checks stand for
-      when: ansible_failed_task.name | default('') in _checks
+      when:
+        - not _cassandra_config_checks_ended | bool
+        - ansible_failed_result | default(none) | to_json | hash('sha1') != _cassandra_config_failed_before
       ansible.builtin.fail:
         msg: >-
           {{ _msg if _msg is match('REFUSED ') else _cassandra_config_checked_names ~ ': ' ~ _msg }}
       vars:
         cassandra_output: true  # a verdict: its msg as is (ops callback)
         _msg: "{{ ansible_failed_result.msg | default('a check failed') }}"  # (a refusal names them already)
-        _checks: >-
-          {{ lookup('ansible.builtin.file', role_path ~ '/tasks/checks.yml') | from_yaml | map(attribute='name') | list }}
