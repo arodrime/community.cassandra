@@ -311,7 +311,7 @@ def test_the_outcomes_grouped_in_the_plan():
     # the nodes changed first, in inventory order of their first node
     assert cassandra_apply_config_outcomes(outcome_nodes(), plan=True) == [
         'node2, node4  write + restart',
-        'node3         write, no restart (owner or mode only, read at start)',
+        'node3         write, no restart (the running Cassandra keeps what it read until its next restart)',
         'node1, node5  up to date']
     nodes = [{"name": "node1", "todo": True, "then": "start"}, {"name": "node2", "todo": True, "then": "write"}]
     assert cassandra_apply_config_outcomes(nodes, plan=True) == [
@@ -345,10 +345,10 @@ def test_the_check_recap_shows_the_settings_then_the_outcomes():
                                             'WHAT HAPPENS',
                                             '  at once: node3',
                                             '  one node at a time, the cluster checked before and after each: node2, node4',
-                                            '  Cassandra restarted: node2, node4',
-                                            '  no restart (node3): the running Cassandra keeps what it read until its next restart',
+                                            '  Cassandra restart: node2, node4',
                                             '  node2, node4  would apply, then restart',
-                                            '  node3         would apply, no restart',
+                                            '  node3         would apply, no restart (the running Cassandra keeps what it read'
+                                            ' until its next restart)',
                                             '  node1, node5  up to date',
                                             '',
                                             '1 warning in the plan above (node3).']  # said there, not under node3 again
@@ -673,7 +673,7 @@ def test_a_service_has_its_own_label_and_check_separates_found_from_would_do():
         check=True, cluster="c", diff=diff)
     head = ["CHECK  apply_config  c  1 would restart, 1 up to date", "  nothing was changed (--check)", ""]
     would = ["", "WHAT HAPPENS", "  one node at a time, the cluster checked before and after each: h-n2",
-             "  Cassandra restarted: h-n2",
+             "  Cassandra restart: h-n2",
              "  h-n2  would drain and stop Cassandra, start chronyd, wait up to 2m for clock sync, start Cassandra",
              "  h-n1  up to date"]
     assert recap == head + ["WOULD CHANGE"] + ["  " + line for line in diff[1:]] + would

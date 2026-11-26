@@ -55,13 +55,14 @@ def test_a_diff_file_not_written_is_said(tmp_path):
     # (audit rounds 2 and 3) the view names no file that is not there: the one rendered naming none
     assert 'VIEW [\\"WILL CHANGE\\", \\"  jvm-server.options  rewritten\\", \\"      (24 more lines not shown)\\"]' \
         in output, output
-    # (round 7) its lines in 79 columns, the path once, on its own line
+    # (rounds 7, 8) the error as observed, then the file's path on lines of its own, cut after a /, in 79 columns
     said = output.split("TASK [Say the diffs were not written]")[1].split("TASK [")[0]
     lines = [line.strip().rstrip(",")[1:-1] for line in said.split("\n")
              if line.strip().startswith('"') and not line.strip().startswith('"msg"')]
-    assert lines[0].startswith("WARNING  the files' diffs of this run were not written: ") and str(path) not in lines[0]
-    assert "  " + str(path) in lines and said.count(str(path)) == 1, said
-    assert all(len(line) <= 79 for line in lines if str(path) not in line), lines
+    assert lines[0].startswith("WARNING  the files' diffs of this run were not written: ")
+    at = next(i for i, line in enumerate(lines) if line.startswith("  the file:"))
+    assert "".join(line.strip() for line in lines[at:-1])[len("the file:"):].strip() == str(path), lines
+    assert all(len(line) <= 79 for line in lines[at:]), lines
 
 
 @pytest.mark.playbook

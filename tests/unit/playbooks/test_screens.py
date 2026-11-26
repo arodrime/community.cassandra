@@ -343,7 +343,7 @@ def test_apply_config_and_update_java_screens(monkeypatch):
                     "  made by:  community.cassandra 3.0.0-rc1, commit 1a2b3c4d5e6f\n\n"  # (the version and commit)
                     "WILL CHANGE\n  on node1\n    cassandra.yaml  rewritten\n      concurrent_reads  48 -> 32\n\n"
                     "WHAT HAPPENS\n  one node at a time, the cluster checked before and after each: node1\n"
-                    "  Cassandra restarted: node1\n  node1  write + restart\n  node2  up to date")
+                    "  Cassandra restart: node1\n  node1  write + restart\n  node2  up to date")
     question = templar_for(dict(trusted(t["vars"]), **trusted(play["vars"]), ansible_play_hosts=hosts,
                                 hostvars=APPLY_HOSTVARS, _cassandra_apply_config_view=APPLY_VIEW, groups=APPLY_GROUPS, **cluster))
     # the question names the most disruptive effect, on which nodes: a Cassandra restart, a start
@@ -522,11 +522,13 @@ def test_apply_config_recap():
         "WHAT HAPPENS",
         "  at once: node1, node4",
         "  one node at a time, the cluster checked before and after each: node2",
-        "  Cassandra restarted: node2",
-        "  no restart (node1, node4): the running Cassandra keeps what it read until its next restart",
+        "  Cassandra restart: node2",
         "  node2  would apply, then restart",
-        "    restart pending (jvm11-server.options changed since the running Cassandra started)",
-        "  node1  would apply, no restart",
+        # (79 columns at most, as WILL CHANGE: audit round 8)
+        "    restart pending (jvm11-server.options changed since the running Cassandra",
+        "      started)",
+        "  node1  would apply, no restart (the running Cassandra keeps what it read",
+        "         until its next restart)",
         "  node3  up to date",
         "  node4  not done (the run stopped before it)",
         "  node5  not in this run (--limit)"]

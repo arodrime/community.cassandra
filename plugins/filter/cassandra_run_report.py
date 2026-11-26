@@ -107,8 +107,9 @@ def cassandra_run_report_times(nodes, starts=None):
 def cassandra_run_report_old(files, operation, keep=KEEP):
     """files: the dir's files (ansible.builtin.find's: [{path, mtime}]); operation -> the paths of its reports
     (cassandra_run_report_name's, --check's too) past the keep newest, the oldest first; then the .diff files next to
-    them (apply_config's) whose report goes, and the ones with no report (a run that stopped before writing it)
-    older than the oldest report kept."""
+    them (apply_config's) whose report goes, whatever their time (a --check one by its --check report); then the ones
+    with no report (a run that stopped before writing it): older than the oldest report kept, and past the keep
+    newest of them."""
     def mine(ext):
         name = re.compile(r"^%s-(check-)?\d{4}-\d{2}-\d{2}-\d{4}(\d{2})?\.%s$" % (re.escape(str(operation)), ext))
         return sorted((f for f in files or [] if name.match(os.path.basename(str(f.get("path", ""))))),
@@ -120,9 +121,12 @@ def cassandra_run_report_old(files, operation, keep=KEEP):
     gone, kept = reports[:max(len(reports) - int(keep), 0)], reports[max(len(reports) - int(keep), 0):]
     oldest = min([float(f.get("mtime") or 0) for f in kept] or [None]) if kept else None
     reported, still = set(stamp(f) for f in reports), set(stamp(f) for f in kept)
-    diffs = [f for f in mine("diff") if stamp(f) not in still
-             and (stamp(f) in reported or (oldest is not None and float(f.get("mtime") or 0) < oldest))]
-    return [str(f["path"]) for f in gone] + [str(f["path"]) for f in diffs]
+    diffs = mine("diff")
+    orphans = [f for f in diffs if stamp(f) not in reported]
+    extra = orphans[:max(len(orphans) - int(keep), 0)]
+    old = [f for f in diffs if (stamp(f) in reported and stamp(f) not in still) or f in extra
+           or (f in orphans and oldest is not None and float(f.get("mtime") or 0) < oldest)]
+    return [str(f["path"]) for f in gone] + [str(f["path"]) for f in old]
 
 
 class FilterModule(object):

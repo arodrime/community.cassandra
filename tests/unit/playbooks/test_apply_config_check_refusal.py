@@ -305,7 +305,9 @@ def test_a_cassandra_its_unit_did_not_start_is_not_restarted(unit_running, jvm, 
     assert not all(render("{{ %s }}" % w, dict(variables, _cassandra_apply_config_compare_only=True)) for w in t["when"])
     if refused:
         msg = " ".join(render(t["ansible.builtin.fail"]["msg"], variables).split())
-        assert msg.startswith("node1: Cassandra runs (pid 4242) outside its cassandra unit (not in its control group:")
+        # (the fact observed, no guessed cause: audit round 8)
+        assert msg.startswith("node1: Cassandra runs (pid 4242) outside its cassandra unit (not in its control"
+                              " group). ")
         assert "would start a second Cassandra" in msg and "Nothing was changed." in msg
         assert msg.endswith("start it with its unit (systemctl start cassandra), then run apply_config again.")
     # the plan (--check too) says it on the node, with the same way out as the refusal (audit round 6)

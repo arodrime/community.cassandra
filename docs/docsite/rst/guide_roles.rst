@@ -1067,8 +1067,9 @@ most (a line too long cut to fit, its next parts on lines starting with ``|`` wh
 ``-`` or space); every diff is in full in ``reports/<cluster group>/apply_config-<stamp>.diff`` (under
 ``--check`` too), which the view names without ``--diff``. Ansible's own diffs of each task are not shown. Then
 ``WHAT HAPPENS``: the nodes done at once, the ones done one node at a time (a restart, a start, a firewall change),
-the restarts, ``no restart: the running Cassandra keeps what it read until its next restart`` when none, and what each
-node gets, the nodes with the same outcome on one line. A real run shows them before its question (which names the
+the restarts, and what each node gets, the nodes with the same outcome on one line, with why a node is not restarted
+(its own reason, e.g. ``jmxremote.password: read at each JMX login``; with none, ``the running Cassandra keeps what
+it read until its next restart``), 79 columns at most. A real run shows them before its question (which names the
 most disruptive effect: ``Apply changes and restart Cassandra on node1?``) and ends with what each node got;
 ``--check`` shows no plan: its recap is the plan, said once (the verdict with the restarts first, ``nothing was
 changed (--check)``, ``WOULD CHANGE``, ``WHAT HAPPENS``, the warnings).

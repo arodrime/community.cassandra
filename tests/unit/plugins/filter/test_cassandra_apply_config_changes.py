@@ -169,3 +169,33 @@ def test_the_diff_file_s_head_says_when_it_is_what_was_written(tmp_path):
         "apply_config c: the files' diffs (what this run writes once you answer yes), secrets masked"
     assert cassandra_apply_config_diff_text([node.data()], "c", check=True).splitlines()[0] == \
         "apply_config --check c: the files' diffs (what a real run would write), secrets masked"
+
+
+def test_the_diff_file_s_head_without_a_question_or_a_cluster_name(tmp_path):
+    # (audit round 8) no question asked (cassandra_operation_confirm false): what this run writes; no cluster name:
+    # none said
+    node = Node(tmp_path, "n1", files={"jvm-server.options": NODE_JVM})
+    assert cassandra_apply_config_diff_text([node.data()], "c", asked=False).splitlines()[0] == \
+        "apply_config c: the files' diffs (what this run writes), secrets masked"
+    assert cassandra_apply_config_diff_text([node.data()], "", check=True).splitlines()[0] == \
+        "apply_config --check: the files' diffs (what a real run would write), secrets masked"
+
+
+def test_the_warning_of_a_diff_file_not_written():
+    # (audit round 8) the error as ansible-core 2.16 and 2.21 give it, whole (cassandra_fit wraps it); the file's
+    # path on lines of its own, cut after a /, in 79 columns
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config_changes import (
+        cassandra_apply_config_diff_warning)
+    path = "/srv/ansible/inventories/production-cluster-eu/reports/prod-eu/apply_config-check-2026-11-25-120000.diff"
+    for error in ("There was an issue creating /srv/ansible/inventories/production-cluster-eu/reports/prod-eu as"
+                  " requested: [Errno 20] Not a directory: b'/srv/ansible/inventories/production-cluster-eu/reports'",
+                  "Task failed: Module failed: [Errno 20] Not a directory: b'/srv/ansible/inventories/x'"):
+        lines = cassandra_apply_config_diff_warning(error, path)
+        head = "WARNING  the files' diffs of this run were not written: "
+        assert lines[0].startswith(head)
+        at = next(i for i, line in enumerate(lines) if line.startswith("  the file:"))
+        assert " ".join(line.strip() for line in lines[:at])[len(head):] == error  # (the error whole, as observed)
+        at = next(i for i, line in enumerate(lines) if line.startswith("  the file:"))
+        assert "".join(line.strip() for line in lines[at:-1]) == "the file:" + path
+        assert all(len(line) <= 79 for line in lines[at:]) and lines[-1] == \
+            "  cassandra_run_report_dir can name another dir"

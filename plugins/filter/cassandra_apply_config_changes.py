@@ -14,7 +14,8 @@ node01..node06"), each file under them with what it gets:
 "a -> b" a value changed. Lines of 79 columns at most. With --diff, each file's unified diff under it, once per group
 of nodes with the same diff (DIFF_LINES lines at most, the rest in the .diff file); without, the .diff file named.
 The .diff file (cassandra_apply_config_diff_text): every file's unified diff, each once per group of nodes with the
-same one. Secrets are masked in both (the role's diffs are)."""
+same one. Secrets are masked in both (the role's diffs are). cassandra_apply_config_diff_warning: the WARNING of a .diff
+file not written."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -309,7 +310,7 @@ def _naming(words, path, width):
     return lines + [line]
 
 
-def cassandra_apply_config_diff_text(nodes, cluster="", check=False):
+def cassandra_apply_config_diff_text(nodes, cluster="", check=False, asked=True):
     """nodes: as cassandra_apply_config_diff takes them -> the text of the .diff file: every file's unified diff (masked
     as the role's), once per group of nodes with the same one; "" when no file has one."""
     prepared = [ac._prepare(n) for n in nodes or []]
@@ -333,10 +334,20 @@ def cassandra_apply_config_diff_text(nodes, cluster="", check=False):
             text += ["== %s  on %s" % (name, said)] + diff + [""]
     if not text:
         return ""
-    head = "apply_config%s %s: the files' diffs (%s), secrets masked" % (
-        " --check" if check else "", cluster, "what a real run would write" if check
-        else "what this run writes once you answer yes")
+    head = "%s: the files' diffs (%s), secrets masked" % (
+        " ".join(w for w in ("apply_config", "--check" if check else "", str(cluster or "")) if w),
+        "what a real run would write" if check else "what this run writes once you answer yes" if asked
+        else "what this run writes")
     return "\n".join([head, ""] + text)
+
+
+def cassandra_apply_config_diff_warning(error, path, width=WIDTH):
+    """The WARNING of a .diff file not written: the error as observed, then the file's path on lines of its own
+    (cut after a /, _naming), then where another dir is set; every line in width -> [line]."""
+    lines = out.fit(["WARNING  the files' diffs of this run were not written: %s" % (error or "no error said")],
+                    int(width))
+    return lines + _naming(["  the file:"], str(path), int(width)) + [
+        "  cassandra_run_report_dir can name another dir"]
 
 
 class FilterModule(object):
@@ -344,4 +355,5 @@ class FilterModule(object):
         return {
             "cassandra_apply_config_changes": cassandra_apply_config_changes,
             "cassandra_apply_config_diff_text": cassandra_apply_config_diff_text,
+            "cassandra_apply_config_diff_warning": cassandra_apply_config_diff_warning,
         }

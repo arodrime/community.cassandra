@@ -75,7 +75,6 @@ PLANNED = {"restart": "write + restart", "start": "write + start", "write": "wri
 # said in the plan only, before the question
 _WHY = {"start": "Cassandra not running: started once written (down over max_hint_window? repair it)",
         "write": "Cassandra stopped: left stopped, reads its config when it starts",
-        "none": "owner or mode only, read at start",
         "os": "no restart"}
 # a node whose Cassandra is not running (cassandra_apply_config_then write or start), said with its outcome
 NOT_RUNNING = "Cassandra not running"
@@ -839,6 +838,10 @@ def _outcome(node, check, plan):
             text += " (%s)" % "; ".join(kept_running)
         elif proven:
             text = ("would apply, no restart" if check else "applied, not restarted") + " (%s)" % "; ".join(proven)
+        elif check and kept_running:  # (its own reasons, as in the plan)
+            text += " (%s)" % "; ".join(kept_running)
+        elif (plan or check) and then == "none" and not written_back:  # (no reason of its own)
+            text += " (%s)" % KEEPS
         elif plan and then == "write" and node.get("unit_failed"):  # not stopped on purpose: this run does not start it
             text += " (its cassandra unit failed: left as it is)"
         elif plan and then in _WHY and not (then == "none" and written_back):
@@ -916,7 +919,8 @@ def cassandra_apply_config_outcomes(nodes, check=False, plan=False, width=None, 
 
 # the section of what the run does to each node (a real run: before its question; --check: in its recap)
 HAPPENS = "WHAT HAPPENS"
-NO_RESTART_FACT = "no restart: the running Cassandra keeps what it read until its next restart"
+# why a node written with no restart is not restarted when it has no reason of its own (kept_running)
+KEEPS = "the running Cassandra keeps what it read until its next restart"
 
 
 def _happens_facts(nodes):
@@ -934,24 +938,13 @@ def _happens_facts(nodes):
         lines.append("at once: %s" % out.nodes(at_once, all_nodes=every))
     if serial:
         lines.append("one node at a time, the cluster checked before and after each: %s" % out.nodes(serial, all_nodes=every))
-    if restarts:
-        lines.append("Cassandra restarted: %s" % out.nodes(restarts, all_nodes=every))
+    if restarts:  # (the plan's tense: what a run does, not what it did)
+        lines.append("Cassandra restart: %s" % out.nodes(restarts, all_nodes=every))
     if starts:
-        lines.append("Cassandra started (not running now): %s" % out.nodes(starts, all_nodes=every))
+        lines.append("Cassandra start (not running now): %s" % out.nodes(starts, all_nodes=every))
     if stopped:
         lines.append("Cassandra stopped, left stopped: %s" % out.nodes(stopped, all_nodes=every))
-    # (the nodes done at once with Cassandra running: the ones with config written keep what they read, the ones
-    # with live OS settings only get them live; named unless they are all the nodes to do)
-    config = [str(n["name"]) for n in todo if n.get("todo")]
-    kept = [n for n in at_once if n not in stopped and n in config]
-    live = [n for n in at_once if n not in stopped and n not in config]
-    if kept and len(kept) == len(todo):
-        lines.append(NO_RESTART_FACT)
-    elif kept:
-        lines.append("no restart (%s): %s" % (out.nodes(kept, all_nodes=every), NO_RESTART_FACT[len("no restart: "):]))
-    if live:
-        lines.append("no restart%s: the OS settings applied live" % (
-            "" if len(live) == len(todo) else " (%s)" % out.nodes(live, all_nodes=every)))
+    # (why a node done at once is not restarted: on its own line, its own reason, KEEPS when it has none)
     return lines
 
 
@@ -961,8 +954,17 @@ def cassandra_apply_config_happens(nodes, check=False, width=None, margin=0):
     facts = _happens_facts(nodes)
     if not facts:
         return []
-    width = _width(width, margin)
+    width = _view_width(width, margin)
     return out.fit(facts, width) + _grouped(nodes, check, plan=not check, width=width)[0]
+
+
+# the width of the plan's views (WILL CHANGE, WHAT HAPPENS): the terminal's, VIEW_WIDTH at most
+VIEW_WIDTH = 79
+
+
+def _view_width(width, margin=0):
+    """_width, VIEW_WIDTH at most for the terminal's (as cassandra_apply_config_changes')."""
+    return min(_width(width, margin), VIEW_WIDTH - margin) if str(width) == "terminal" else _width(width, margin)
 
 
 def cassandra_apply_config_warnings(nodes):
@@ -1083,7 +1085,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
     ["CHECK  apply_config  my_cluster  1 would apply, 1 nothing to apply (12s)", "", <the diff's lines>, "",
     "node2  would apply, then restart", "node1  nothing to apply", "", "WARNING  node2: node2's data dirs belong to root"]."""
     nodes = list(nodes or []) if check else [_after_run(n) for n in nodes or []]
-    lines, counts = _grouped(nodes, check, width=_width(width, 2) if check else width)
+    lines, counts = _grouped(nodes, check, width=_view_width(width, 2) if check else width)
     shown = [_recap_verdict(counts, check, cluster, out.number(seconds))]  # (text before ansible-core 2.19)
     if check:  # the plan, once: what changes (the files), then what happens to each node
         shown += ["  nothing was changed (--check)"]
@@ -1091,7 +1093,7 @@ def cassandra_apply_config_recap(nodes, check=False, cluster="", seconds=None, d
         shown += (["", diff[0]] + ["  " + line if line else "" for line in diff[1:]] if diff else [])
         facts = _happens_facts(nodes)
         # (nothing happens: no WHAT HAPPENS, each node's line under the verdict)
-        lines = (["", HAPPENS] if facts else []) + ["  " + line for line in out.fit(facts, _width(width, 2)) + lines]
+        lines = (["", HAPPENS] if facts else []) + ["  " + line for line in out.fit(facts, _view_width(width, 2)) + lines]
     lines = lines + _recap_warnings(nodes, check, refused, planned, width, more)
     # (an optional restart is no NEXT after a FAILED run: its stop said what to do first)
     after = [] if check or counts.get("failed") else _read_ahead_todo(nodes, restart_command, _width(width))

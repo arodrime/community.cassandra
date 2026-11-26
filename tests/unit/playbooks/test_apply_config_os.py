@@ -237,32 +237,25 @@ def test_swap_left_on_said_under_the_node_once(live, swapoff, said):
 
 
 @pytest.mark.parametrize("nodes, said", [
+    # (the plan's tense: what the run does; audit round 8)
     ([dict(todo=True, then="restart")], ["one node at a time, the cluster checked before and after each: n1",
-                                         "Cassandra restarted: n1"]),
-    # (live OS settings only: no JVM line, but no restart said: audit round 2)
-    ([dict(todo=False, os=True, then="none")], ["at once: n1", "no restart: the OS settings applied live"]),
-    ([dict(todo=True, then="none")], ["at once: n1", "no restart: the running Cassandra keeps what it read until its"
-                                                     " next restart"]),
+                                         "Cassandra restart: n1"]),
+    # (no general no-restart sentence: each node's own reason is on its outcome line; audit round 8)
+    ([dict(todo=False, os=True, then="none")], ["at once: n1"]),
+    ([dict(todo=True, then="none")], ["at once: n1"]),
     # a start is one node at a time too, never "at once"; a Cassandra stopped and left so: said, no JVM line
     ([dict(todo=True, then="restart"), dict(todo=True, then="start")],
-     ["one node at a time, the cluster checked before and after each: n1, n2", "Cassandra restarted: n1",
-      "Cassandra started (not running now): n2"]),
+     ["one node at a time, the cluster checked before and after each: n1, n2", "Cassandra restart: n1",
+      "Cassandra start (not running now): n2"]),
     ([dict(todo=True, then="write")], ["at once: n1", "Cassandra stopped, left stopped: n1"]),
     # a firewall change: one node at a time, the cluster checked around each
     ([dict(todo=True, then="none", firewall=True)], ["one node at a time, the cluster checked before and after each: n1"]),
     ([dict(todo=False, then="none")], []),
-    # (audit 2026-11-25) a mixed plan names the nodes with no restart, an OS change on one hides it for no other
     ([dict(todo=True, then="restart"), dict(todo=True, then="none")],
-     ["at once: n2", "one node at a time, the cluster checked before and after each: n1", "Cassandra restarted: n1",
-      "no restart (n2): the running Cassandra keeps what it read until its next restart"]),
-    ([dict(todo=True, then="none", os=True), dict(todo=True, then="none")],
-     ["at once: n1, n2", "no restart: the running Cassandra keeps what it read until its next restart"]),
-    ([dict(todo=True, then="none"), dict(todo=False, os=True, then="none")],
-     ["at once: n1, n2", "no restart (n1): the running Cassandra keeps what it read until its next restart",
-      "no restart (n2): the OS settings applied live"])])
+     ["at once: n2", "one node at a time, the cluster checked before and after each: n1", "Cassandra restart: n1"])])
 def test_what_happens_says_the_order(nodes, said):
     # (2026-11-25) WHAT HAPPENS, before the question and in the --check recap: at once or one node at a time, the
-    # restarts, and that a running Cassandra keeps what it read when none
+    # restarts; why a node is not restarted: on its own outcome line
     from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import _happens_facts
     assert _happens_facts([dict(n, name="n%d" % (i + 1)) for i, n in enumerate(nodes)]) == said
     screen = FIND["tasks"][TASKS.index("Show the plan and confirm the run")]
@@ -683,3 +676,37 @@ def test_the_plan_says_what_a_real_run_does_in_its_order():
     assert "chronyc -n waitsync" in wait["ansible.builtin.shell"]
     # the restart's reason, for the recap after a real run: short
     assert note([TIMESYNC], full=True)["cassandra_apply_config_restart_why"] == "time sync"
+
+
+def test_each_node_says_its_own_reason_for_no_restart():
+    # (audit round 8) a node whose only change applies live says its own reason, never "keeps what it read until its
+    # next restart"; a node with no reason of its own says that, for itself only
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_apply_config import (
+        cassandra_apply_config_happens, cassandra_apply_config_recap)
+    nodes = [{"name": "node1", "todo": True, "then": "none", "kept_running": ["jmxremote.password: read at each JMX login"]},
+             {"name": "node2", "todo": True, "then": "none",
+              "kept_running": ["the exporter rules: reloaded at its next scrape"]},
+             {"name": "node3", "todo": True, "then": "none"},
+             {"name": "node4", "todo": True, "then": "restart"}]
+    nodes = [dict(n, done=True) for n in nodes]  # (the --check recap: each one's run as checked)
+    for lines in (cassandra_apply_config_happens(nodes, width=200),
+                  cassandra_apply_config_recap(nodes, check=True, diff=["WOULD CHANGE", "x"], width=200)):
+        said = [" ".join(line.split()) for line in lines]
+        assert not [line for line in said if line.startswith("no restart")], said
+        assert "node1 write, no restart (jmxremote.password: read at each JMX login)" in said or \
+            "node1 would apply, no restart (jmxremote.password: read at each JMX login)" in said, said
+        assert [line for line in said if line.startswith("node2 ") and "reloaded at its next scrape" in line], said
+        assert [line for line in said if line.startswith("node3 ") and "keeps what it read until its next restart"
+                in line], said
+        assert not [line for line in said if line.startswith(("node1", "node2")) and "keeps what it read" in line]
+
+
+def test_what_happens_fits_79_columns_on_a_wide_terminal(monkeypatch):
+    # (audit round 8) WHAT HAPPENS as WILL CHANGE: the terminal's width, 79 at most
+    from ansible_collections.community.cassandra.plugins.filter import cassandra_apply_config as ac
+    monkeypatch.setattr(ac, "terminal_width", lambda: 200)
+    nodes = [{"name": "cass-prod-eu-west-%02d.example.internal" % i, "todo": True, "done": True,
+              "then": "restart" if i % 2 else "none"} for i in range(1, 13)]
+    for lines in (ac.cassandra_apply_config_happens(nodes, width="terminal", margin=2),
+                  ac.cassandra_apply_config_recap(nodes, check=True, diff=["WOULD CHANGE", "x"], width="terminal")):
+        assert [line for line in lines if len(line) > 79 and not line.startswith("CHECK")] == [], lines

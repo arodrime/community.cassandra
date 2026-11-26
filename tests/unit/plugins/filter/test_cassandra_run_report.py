@@ -139,7 +139,14 @@ def test_the_oldest_reports_past_the_kept_ones():
         "/r/apply_config-2026-11-01-1200.diff", "/r/apply_config-2026-11-02-1200.diff",
         "/r/apply_config-2026-11-03-1200.diff", "/r/apply_config-2026-11-03-1300.diff",
         "/r/apply_config-2026-11-04-1200.diff"]
-    assert cassandra_run_report_old(diffs[:3], "apply_config") == []  # (no report kept: none removed)
+    # (round 8) a .diff kept with its report whatever its time, a --check one with its --check report
+    late = [{"path": "/r/apply_config-2026-11-20-1200.diff", "mtime": 1},
+            {"path": "/r/apply_config-check-2026-11-24-1200.diff", "mtime": 1}]
+    assert not set(f["path"] for f in late) & set(cassandra_run_report_old(files + late, "apply_config"))
+    # (no report there: the orphans past the keep newest, the oldest first)
+    assert cassandra_run_report_old(diffs[:3], "apply_config", keep=1) == [
+        "/r/apply_config-2026-11-01-1200.diff", "/r/apply_config-2026-11-02-1200.diff"]
+    assert cassandra_run_report_old(diffs[:3], "apply_config") == []
 
 
 def run_report(tmp_path, check=False, report_dir=None, keep=None):

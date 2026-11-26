@@ -959,7 +959,7 @@
       ansible.builtin.fail:
         msg: >-
           {{ inventory_hostname }}: Cassandra runs (pid {{ cassandra_jvm.pid }}) outside its cassandra unit (not in
-          its control group: started by hand, or by a script of its own). The restart its config needs would start a
+          its control group). The restart its config needs would start a
           second Cassandra next to it. Nothing was changed. {{ _outside_way_out }}
       when:
         - cassandra_apply_config_then == 'restart'
@@ -1219,7 +1219,9 @@
                margin=2, show_diff=ansible_diff_mode | bool) }}
         # every file's diff, once per group of nodes with the same one: written next to the run's report (below)
         cassandra_apply_config_diff_path: "{{ _diff_path }}"
-        cassandra_apply_config_diff_text: "{{ _nodes | community.cassandra.cassandra_apply_config_diff_text(_cluster, ansible_check_mode) }}"
+        cassandra_apply_config_diff_text: >-
+          {{ _nodes | community.cassandra.cassandra_apply_config_diff_text(_cluster, ansible_check_mode,
+               cassandra_operation_confirm | default(true) | bool) }}
         # 5.0: the nodes the run moves to storage_compatibility_mode NONE (the plan says it is the point of no return):
         # their cassandra.yaml written with it, or at NONE already while Cassandra runs an earlier mode (restarted);
         # not one that runs NONE already (read over CQL or logged at its start: its file written back)
@@ -1301,16 +1303,14 @@
         - name: Say the diffs were not written
           ansible.builtin.debug:
             msg: >-
-              {{ ["WARNING  the files' diffs of this run were not written: " ~ _error, '  ' ~ cassandra_apply_config_diff_path,
-                  '  cassandra_run_report_dir can name another dir'] | community.cassandra.cassandra_fit }}
+              {{ _error | community.cassandra.cassandra_apply_config_diff_warning(cassandra_apply_config_diff_path) }}
           when: _cassandra_apply_config_diff_dir is failed or _cassandra_apply_config_diff_written is failed
           vars:
             cassandra_output: true
-            # (the error observed: the dir's, else the file's; the paths in it left out, the file's said on its own line)
+            # (the error observed: the dir's, else the file's)
             _error: >-
               {{ (_cassandra_apply_config_diff_dir if _cassandra_apply_config_diff_dir is failed
-                  else _cassandra_apply_config_diff_written).msg | default('no error said')
-                 | regex_replace(":? b?'?/[^ ']+'?", '') }}
+                  else _cassandra_apply_config_diff_written).msg | default('') }}
 
         # (the view named a file that is not there: the one naming none instead)
         - name: Name no diffs file in the view
