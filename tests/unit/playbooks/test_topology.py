@@ -304,8 +304,8 @@ def test_preflight_notes_render_one_line_each():
         "         set for: n1",
         "         no role or playbook reads it"]
     hostvars["n1"]["cassandra_seeds"] = "10.0.0.1"
-    assert "         cassandra_seeds is set too" in render(t["vars"]["_note"], _run=["n1", "n2"], hostvars=hostvars,
-                                                          _nl="\n").split("\n")
+    both = render(t["vars"]["_note"], _run=["n1", "n2"], hostvars=hostvars, _nl="\n")
+    assert "         cassandra_seeds is set too" in both.split("\n")
     del hostvars["n1"]["cassandra_seeds"]
     assert t["vars"]["_run"] == "{{ ansible_play_hosts }}"
     # (2026-11-25) every node of the run: "all N nodes" (3 or more), not their names

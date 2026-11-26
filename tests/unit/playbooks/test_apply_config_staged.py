@@ -149,7 +149,7 @@ def test_a_staged_file_changed_stops_with_what_was_seen_and_a_resume(tmp_path):
     stop = next(t for t in tasks if t["name"] == "Stop, a staged file is not as this run staged it")
     from ansible_collections.community.cassandra.tests.unit.helpers import render_with
     msg = render_with(stop["ansible.builtin.fail"]["msg"],
-                          dict(stop["vars"], cassandra_config_staged_moved=result, inventory_hostname="n2"))
+                      dict(stop["vars"], cassandra_config_staged_moved=result, inventory_hostname="n2"))
     results = [{"node": "n1", "result": "apply_config done in 38s", "stage": "after"},
                {"node": "n2", "result": "apply_config FAILED after 2s: staged file changed", "stage": "during"},
                {"node": "n3", "result": "not run yet"}]

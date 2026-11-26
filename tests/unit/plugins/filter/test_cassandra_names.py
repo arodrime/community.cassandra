@@ -261,4 +261,4 @@ def test_a_comment_pasted_into_a_key_names_the_variable_its_last_word_makes():
                     "         closest known variable: cassandra_log_console",
                     "         cassandra_log_console not set: its default applies meanwhile"]
     assert all(len(line) <= 79 for line in note)
-    assert cassandra_unknown_note("cassandra_x", "", "n1").split("\n")[-1] == "         no role or playbook reads it"
+    assert cassandra_unknown_note("cassandra_x", "", "n1").rsplit("\n", maxsplit=1)[-1] == "         no role or playbook reads it"
