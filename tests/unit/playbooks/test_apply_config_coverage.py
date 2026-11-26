@@ -528,6 +528,10 @@ def test_a_package_update_on_a_node_with_its_own_os_settings_says_a_changed_limi
     variables = dict(cassandra_service_summary_hosts=["h-n1"], hostvars=deep, groups={"prod": ["h-n1"]},
                      cassandra_hosts="prod", ansible_check_mode=False, _no_return=[])
     variables["_limits_changed"] = render(recap_play["vars"]["_limits_changed"], variables)
+    # (and the unknown variables, none here)
+    variables["_unknown"] = render(summary["vars"]["_unknown"], variables)
+    variables["_unknown_vars"] = render(recap_play["vars"]["_unknown_vars"], variables)
+    assert variables["_unknown"] == variables["_unknown_vars"] == []
     for template in (summary["vars"]["_warnings"], recap_play["vars"]["_more"]):
         assert shown in cassandra_warnings(render(template, variables))
     warnings = cassandra_limits_changed(["h-n1", "h-n2", "h-n3", "h-n4"], hostvars)

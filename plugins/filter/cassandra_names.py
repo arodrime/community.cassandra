@@ -85,7 +85,8 @@ NOT_VARIABLES = frozenset((
     "cassandra_service_other_seeds", "cassandra_staying_node", "cassandra_storage_mode_given_rows", "cassandra_storage_mode_guard",
     "cassandra_sysctl_todo",
     "cassandra_too_few_nodes", "cassandra_topology_done", "cassandra_topology_nothing_to_do",
-    "cassandra_topology_refusals", "cassandra_unknown_note", "cassandra_unknown_recap", "cassandra_confirm_stop", "cassandra_path_lines", "cassandra_upgrade_copy_refusal",
+    "cassandra_topology_refusals", "cassandra_unknown_note", "cassandra_unknown_recap",
+    "cassandra_confirm_stop", "cassandra_path_lines", "cassandra_upgrade_copy_refusal",
     # other words: a file the roles read (plugin_utils/cassandra_config_record.py), a module a template's comment
     # names (cassandra_os.py)
     "cassandra_config_record", "cassandra_os"))

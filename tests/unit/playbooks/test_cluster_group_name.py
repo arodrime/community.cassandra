@@ -46,6 +46,7 @@ SITES = [
     ("update_java.yml", "_cluster"), ("upgrade.yml", "_cluster"), ("apply_config.yml", "_cluster"),
     # (every confirmation: the shared question names the cluster; the typed one of assassinate too)
     ("confirm_ask.yml", "_cluster"), ("remove_dead_node.yml", "_cluster"),
+    ("confirm_ask.yml", "_cluster"), ("confirm_ask.yml", "_cluster"),  # (its stops after a no: the way out)
 ]
 
 # cassandra_cluster_name said or used as itself, on purpose: the checks of the name, the data loss texts and the

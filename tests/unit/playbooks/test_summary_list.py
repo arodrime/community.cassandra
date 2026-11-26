@@ -60,8 +60,14 @@ def test_operation_summary_is_a_recap():
             unlimited, _cluster="my_cluster", _warnings=[]))]
         assert said[-1] == "n3 not touched (not in this run)" and "--limit" not in " ".join(said)
     variables["_cluster"] = render(task["vars"]["_cluster"], **variables)
+    variables["_unknown"] = render(task["vars"]["_unknown"], **variables)
     variables["_warnings"] = render(task["vars"]["_warnings"], **variables)
     assert variables["_warnings"] == []
+    # a variable not known (a typo?), said by preflight: the recap says it again, with its grep
+    hostvars["n1"]["_cassandra_preflight_unknown"] = {"cassandra_log_consol": "cassandra_log_console"}
+    unknown = render(task["vars"]["_unknown"], **dict(variables, ansible_inventory_sources=["/w/inv/hosts.yml"]))
+    assert unknown[0]["text"][0] == "1 variable not known to this collection (probably a typo): see above"
+    del hostvars["n1"]["_cassandra_preflight_unknown"]
     # a verdict, the nodes grouped (a list: a line each under any callback)
     lines = [" ".join(line.split()) for line in render(task["ansible.builtin.debug"]["msg"], **variables)]
     assert lines == ["DONE add_node my_cluster 1 added, 2 not touched", "n1 added in 5s", "n2 not touched (not reached)",
