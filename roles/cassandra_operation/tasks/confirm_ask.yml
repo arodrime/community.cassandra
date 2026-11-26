@@ -46,21 +46,27 @@
 # Only go and again carry on, whatever else the answer turned into
 - name: Stop at the operator's request
   ansible.builtin.fail:
-    msg: "Stopped at your request, {{ _cassandra_confirm_unchanged | default('nothing changed') }}."
+    msg: "{{ 'at your request' | community.cassandra.cassandra_confirm_stop(unchanged=_unchanged, **_stop) | join(_nl) }}"
   run_once: true
   when: _cassandra_confirm_answer not in ['go', 'again']
-  vars:
+  vars: &confirm_stop_vars
     cassandra_output: true
+    _unchanged: "{{ _cassandra_confirm_unchanged | default('nothing changed') }}"
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+    # the playbook asked about (screen.yml's; _cassandra_confirm_operation: another's), the cluster, the run's
+    # command: the way out runs it again
+    _stop: "{{ _cassandra_run_command_args | combine({'operation': _operation, 'cluster': _cluster}) }}"
+    _operation: "{{ _cassandra_confirm_operation | default((cassandra_screen | default({})).operation | default('')) }}"
+    _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
 - name: Stop after 3 answers that are neither yes nor no
   ansible.builtin.fail:
-    msg: "No yes or no after 3 answers, stopped, {{ _cassandra_confirm_unchanged | default('nothing changed') }}."
+    msg: "{{ 'no yes or no after 3 answers' | community.cassandra.cassandra_confirm_stop(unchanged=_unchanged, **_stop) | join(_nl) }}"
   run_once: true
   when:
     - _cassandra_confirm_answer == 'again'
     - _cassandra_confirm_tries | int >= 3
-  vars:
-    cassandra_output: true
+  vars: *confirm_stop_vars
 
 - name: Ask again
   ansible.builtin.include_tasks: confirm_ask.yml

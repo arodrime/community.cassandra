@@ -119,7 +119,7 @@ def test_y_goes_on(tmp_path):
 def test_no_stops(tmp_path):
     rc, output, seen = run_in_terminal(tmp_path, ["no"])
     assert rc != 0
-    assert "Stopped at your request, nothing changed." in output
+    assert "STOPPED  at your request, nothing changed" in output
     assert went_on(output) == 0
 
 
@@ -134,7 +134,7 @@ def test_typo_then_yes(tmp_path):
 def test_three_typos_stop(tmp_path):
     rc, output, seen = run_in_terminal(tmp_path, ["yse", "ok", "sure"])
     assert rc != 0
-    assert "No yes or no after 3 answers, stopped, nothing changed." in output
+    assert "STOPPED  no yes or no after 3 answers, nothing changed" in output
     assert seen == 3
     assert went_on(output) == 0
 
@@ -143,7 +143,7 @@ def test_empty_then_n(tmp_path):
     rc, output, seen = run_in_terminal(tmp_path, ["", "n"])
     assert rc != 0
     assert "Please answer yes or no" in output
-    assert "Stopped at your request, nothing changed." in output
+    assert "STOPPED  at your request, nothing changed" in output
     assert "No terminal" not in output
     assert went_on(output) == 0
 
@@ -267,7 +267,8 @@ def test_screen_then_the_question(tmp_path):
     assert output.count('DECOMMISSION NODE  remove node7\\n') == 1
     assert 'WARNING  replication: orders keeps 2 replicas' in output
     assert re.search(r"Confirm the operation\]\r?\nRemove node7\? Answer yes or no:", output)
-    assert "Stopped at your request, nothing changed." in output
+    assert "STOPPED  decommission_node  at your request, nothing changed" in output
+    assert "WAY OUT  to go on, run it again" in output and "community.cassandra.decommission_node" in output
 
 
 def test_screen_is_printed_before_a_run_without_terminal_stops(tmp_path):
@@ -366,3 +367,16 @@ def test_ops_callback_blocks_one_blank_line_apart(tmp_path):
         "",
         "====",
     ], output
+
+
+def test_the_stop_after_a_no_names_the_cluster_and_the_command_again():
+    """(2026-11-26, rig screens) "Stopped at your request, nothing changed." said neither the cluster nor how to go on."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_confirm import cassandra_confirm_stop
+    assert cassandra_confirm_stop("at your request", "apply_config", "test_cluster", inventory=["/w/inv/hosts.yml"],
+                                  cwd="/w") == [
+        "STOPPED  apply_config  test_cluster  at your request, nothing changed",
+        "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+        "  ansible-playbook -i inv/hosts.yml community.cassandra.apply_config"]
+    # a role's question (cassandra_config): no playbook to name
+    assert cassandra_confirm_stop("no yes or no after 3 answers", "", "test_cluster", "config not written") == [
+        "STOPPED  test_cluster  no yes or no after 3 answers, config not written"]

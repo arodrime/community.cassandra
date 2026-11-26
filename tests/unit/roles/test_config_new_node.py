@@ -347,7 +347,7 @@ def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
 def test_no_stops_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "no")
     assert rc != 0
-    assert "Stopped at your request, config not written." in output, output  # (other roles may have run before)
+    assert "STOPPED  test_cluster  at your request, config not written" in output, output  # (other roles may have run before)
     assert "went on" not in output
 
 

@@ -2,12 +2,16 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """cassandra_confirm_answer: the operator's answer to the confirmation
 (the result of ansible.builtin.pause), as go, stop, again or no_terminal.
-Not yes and no: set_fact turns those strings into booleans before 2.19."""
+Not yes and no: set_fact turns those strings into booleans before 2.19.
+cassandra_confirm_stop: the stop after a no (or no yes or no), its way out."""
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+
+from ansible_collections.community.cassandra.plugins.filter.cassandra_output import cassandra_command
+from ansible_collections.community.cassandra.plugins.plugin_utils import cassandra_output as out
 
 # Without a terminal, pause returns an empty answer at once (a few ms, with a
 # warning). Someone pressing Enter needs more: pause also drops the keys
@@ -47,6 +51,28 @@ def cassandra_confirm_answer(reply):
     return "again"
 
 
+# the width of a stop: 79 columns (an 80-column terminal)
+WIDTH = 79
+
+
+def cassandra_confirm_stop(why, operation="", cluster="", unchanged="nothing changed", inventory=None,
+                           default_inventory=None, hosts="", cwd=None):
+    """why: what stopped the question ("at your request", "no yes or no after 3 answers"); operation: the playbook
+    asked about ("" when not one: a role's question); unchanged: what was left as it was. -> the stop's lines: the
+    verdict naming the operation and the cluster, then WAY OUT: the playbook's command to run again (the -e options
+    of this run not known here: said so).
+    Example: "at your request", "apply_config", "c1", inventory=["inv.yml"] -> ["STOPPED  apply_config  c1  at your
+    request, nothing changed", "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+    "  ansible-playbook -i inv.yml community.cassandra.apply_config"]."""
+    head = "  ".join(x for x in ("STOPPED", str(operation or ""), str(cluster or ""), "%s, %s" % (why, unchanged)) if x)
+    if not operation:
+        return out.fit([head], WIDTH)
+    command = cassandra_command(str(operation), inventory=inventory, hosts=hosts, cwd=cwd,
+                                default_inventory=default_inventory)
+    return out.fit([head, "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+                    "  " + command], WIDTH)
+
+
 class FilterModule(object):
     def filters(self):
-        return {"cassandra_confirm_answer": cassandra_confirm_answer}
+        return {"cassandra_confirm_answer": cassandra_confirm_answer, "cassandra_confirm_stop": cassandra_confirm_stop}
