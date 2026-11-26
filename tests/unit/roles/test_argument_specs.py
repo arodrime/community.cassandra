@@ -90,3 +90,13 @@ def test_install_credentials_are_no_log():
     options = spec_options("cassandra_install")
     secret = [k for k in options if k.endswith("_password")] + ["cassandra_java_tarballs"]
     assert sorted(k for k in secret if options[k].get("no_log") is not True) == []
+
+
+def test_cassandra_config_plan_checks_the_argument_spec():
+    # apply_config's compare enters the role with tasks_from: plan.yml; Ansible checks the variables
+    # against the argument spec of the main entry point only: without this task a typo (3w) is written
+    with open(os.path.join(ROLES_DIR, "cassandra_config", "tasks", "plan.yml")) as f:
+        tasks = yaml.safe_load(f)
+    first = tasks[0]
+    assert "ansible.builtin.validate_argument_spec" in first
+    assert "argument_specs.main.options" in first["ansible.builtin.validate_argument_spec"]["argument_spec"]

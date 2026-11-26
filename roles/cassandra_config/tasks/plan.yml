@@ -2,6 +2,14 @@
 # The plan: what the role would change on the node, worked out from what it reads there; nothing is written
 # (apply_plan.yml says, confirms and writes what it lists). The only code that decides what the role changes:
 # apply_config's compare runs it on every node.
+# Ansible checks the variables against meta/argument_specs.yml only when the role is entered by main: apply_config's
+# compare enters it here (tasks_from: plan.yml), so the same check is run here (a typo, concurrent_reads: 3w, stops)
+- name: Check the variables' types
+  ansible.builtin.validate_argument_spec:
+    argument_spec: "{{ (lookup('ansible.builtin.file', role_path ~ '/meta/argument_specs.yml') | from_yaml).argument_specs.main.options }}"
+    validate_args_context: {type: role, name: cassandra_config, argument_spec_name: main, path: "{{ role_path }}"}
+  tags: [always]
+
 - name: Check the variables
   ansible.builtin.include_tasks: checks.yml
   when: not _cassandra_config_checks_once | default(false) | bool
