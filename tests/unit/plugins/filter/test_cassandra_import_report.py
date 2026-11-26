@@ -121,9 +121,9 @@ def test_clean_import_nothing_to_act_on():
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
-        "     expected:  every node up to date in its config files (Medusa, packages, the JMX users, the unit's"
-        " changes since Cassandra started: apply_config --check",
-        "                shows them)",
+        "     expected:  every node up to date in its config files (other roles' items, e.g. Medusa, packages, the"
+        " JMX users, the unit's changes since Cassandra started:",
+        "                apply_config --check shows them)",
         "       ansible-playbook community.cassandra.topology --check",
         "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)
@@ -1404,7 +1404,7 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
     assert ("expected: WOULD CHANGE: the 1 config file listed above, and the rewrites under APPLY_CONFIG WILL REWRITE"
-            " (no effect) (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed,"
+            " (no effect) (other roles' items, e.g. Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed,"
             " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS) ansible-playbook") in steps
 
 
@@ -1562,7 +1562,7 @@ def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
                            "      rewrites 1 other item with no effect"]
     said = " ".join(" ".join(line.split()) for line in lines)
     assert "expected: WOULD CHANGE: the 5 config files listed above, and the rewrites under APPLY_CONFIG WILL REWRITE" \
-        " (no effect) (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
+        " (no effect) (other roles' items, e.g. Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
         " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" in said, said
     # the diffs in the details, once per group of nodes with the same one
     details = report([node(i) for i in range(1, 4)], self_check=checks, details=True)
@@ -1726,7 +1726,8 @@ def test_the_head_says_what_is_written_never_a_restart():
         "                             rejects it)",
         "                             on node1"]
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "expected: WOULD CHANGE: the 3 config files listed above (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
+    assert "expected: WOULD CHANGE: the 3 config files listed above (other roles' items, e.g. Medusa, packages," \
+        " the JMX users, the unit's changes since Cassandra started: not listed," \
         " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
         in said, said
     for text in (report([node(1), node(2)], self_check=checks, details=False),
@@ -1762,7 +1763,8 @@ def test_the_next_step_expects_the_writes_then_every_node_up_to_date():
     checks = {"node1": {"differences": [], "notes": [], "writes": PROD_WRITES[:1]},
               "node2": {"differences": [], "notes": [], "writes": []}}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
-    assert "expected: WOULD CHANGE: the 1 config file listed above (Medusa, packages, the JMX users, the unit's changes since Cassandra started: not listed," \
+    assert "expected: WOULD CHANGE: the 1 config file listed above (other roles' items, e.g. Medusa, packages," \
+        " the JMX users, the unit's changes since Cassandra started: not listed," \
         " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
         in said, said
     checks["node1"]["writes"] = []
@@ -1948,5 +1950,5 @@ def test_the_unit_is_listed_apart_out_of_the_count():
     checks = {"node%d" % i: {"differences": [], "notes": [], "writes": unit} for i in (1, 2)}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, screen=True))
     assert "expected: every node up to date in its config files (cassandra.service: written at its next restart" \
-        " (apply_config's note)) (Medusa, packages, the JMX users, the unit's changes since Cassandra started:" \
+        " (apply_config's note)) (other roles' items, e.g. Medusa, packages, the JMX users, the unit's changes since Cassandra started:" \
         " apply_config --check shows them)" in said, said

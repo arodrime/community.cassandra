@@ -2093,7 +2093,7 @@ REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 # the nodes read the next step's check names (--limit), when some were not read
 LIMIT_READ = 10
 # what the files listed under "the next apply_config" leave out: apply_config --check shows them
-NOT_LISTED = "Medusa, packages, the JMX users, the unit's changes since Cassandra started"
+NOT_LISTED = "other roles' items, e.g. Medusa, packages, the JMX users, the unit's changes since Cassandra started"
 
 
 def _apply_config_expects(writes, rewrites, unread=False):
