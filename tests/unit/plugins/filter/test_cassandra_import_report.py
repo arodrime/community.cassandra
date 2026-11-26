@@ -102,7 +102,7 @@ def test_clean_import_nothing_to_act_on():
                           "    group_vars/my_cluster*/", "",
                           "  report:  reports/my_cluster/report.txt"]
     # each section: two blank lines, its title in a rule, a blank line; what the report is: in the details
-    assert lines[12:16] == ["", "", "==== WHAT TO DO NEXT " + "=" * 76, ""]
+    assert lines[12:16] == ["", "", "==== WHAT TO DO NEXT " + "=" * 79, ""]  # (the widest line: the expected one)
     assert lines[heading(lines, "WORDS") - 2:heading(lines, "WORDS") + 2] == ["", "", "==== WORDS " + "=" * 89, ""]
     assert not has(lines, "TODO") and not has(lines, "WORTH A LOOK") and not has(lines, "DIFFERENT ON SOME NODES")
     assert has(report([node(1)], details=True), "WHAT THIS REPORT IS")
@@ -121,7 +121,9 @@ def test_clean_import_nothing_to_act_on():
     assert after[1:] == [
         "  2. Check that the inventory changes nothing on the nodes (both commands only look):",
         "       ansible-playbook community.cassandra.apply_config --check --diff",
-        "     expected:  every node up to date",
+        "     expected:  every node up to date in its config files (Medusa, packages, the JMX users, the unit's"
+        " changes since Cassandra started: apply_config --check",
+        "                shows them)",
         "       ansible-playbook community.cassandra.topology --check",
         "     expected:  nothing to do"]
     lines = report([node(1)], inventory="/p/inventories", hosts="my_cluster", width=300)
@@ -1879,7 +1881,9 @@ def _convergence_restarts():
 # facts with a value in them: Cassandra's own behaviour, the unit's systemd policy, the JDK the JVM runs
 RESTART_FACTS = (r"\(the node would not restart with (it|them)\)", r"would not start again with \S+ after a restart",
                  r"would restart empty", r"Restart=\S+", r"cassandra_service_restart\b",
-                 r"restart pending on a new JDK: [^.;]*? once restarted",
+                 # (cassandra_import_nodes' sentence whole, its two paths: dots in them)
+                 r"restart pending on a new JDK: Cassandra still runs \S+, removed by an update since it started, and"
+                 r" runs its new build \S+ once restarted",
                  r"\d+ nodes? changes?, no restart \(Java \d+ does not read jvm\d+-server\.options\)")  # (convergence)
 
 
@@ -1891,7 +1895,7 @@ def restart_lines(lines):
         text = text.replace(phrase, "")
     for fact in _convergence_restarts() + list(RESTART_FACTS):
         text = re.sub(fact, "", text)
-    return re.findall(r"[^.;:]*\bre-?start(?:s|ed|ing)?\b[^.;]*", text, re.I)
+    return re.findall(r"[^.;:]*(?:\b|_)re-?start(?:s|ed|ing)?\b[^.;]*", text, re.I)
 
 
 def test_no_restart_said_by_the_import_but_apply_config_s():
@@ -1921,7 +1925,10 @@ def test_no_restart_said_by_the_import_but_apply_config_s():
                  ["a node restarting"], ["rewrites the file and", "restarts the node"],
                  ["the next apply_config re-starts the node"], ["apply_config starts or restarts no node"],
                  # (a fact's pattern stops at its sentence: what follows it is read)
-                 ["restart pending on a new JDK: x. The node restarts once restarted"]):
+                 ["restart pending on a new JDK: x. The node restarts once restarted"],
+                 ["rolling_restart applies them"],
+                 ["restart pending on a new JDK: Cassandra still runs /usr/lib/jvm/jdk-17.0.8, removed by an update since"
+                  " it started, and runs its new build /usr/lib/jvm/jdk-17.0.9 once restarted; apply_config restarts it"]):
         assert restart_lines(said), said
 
 
@@ -1940,5 +1947,6 @@ def test_the_unit_is_listed_apart_out_of_the_count():
     assert "WOULD CHANGE: the 2 config files listed above" in said, said  # (cassandra-env.sh, cassandra.yaml)
     checks = {"node%d" % i: {"differences": [], "notes": [], "writes": unit} for i in (1, 2)}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, screen=True))
-    assert "expected: every node up to date (cassandra.service: written at its next restart (apply_config's note))" \
-        in said, said
+    assert "expected: every node up to date in its config files (cassandra.service: written at its next restart" \
+        " (apply_config's note)) (Medusa, packages, the JMX users, the unit's changes since Cassandra started:" \
+        " apply_config --check shows them)" in said, said

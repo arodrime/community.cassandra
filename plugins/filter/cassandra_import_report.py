@@ -2103,9 +2103,10 @@ def _apply_config_expects(writes, rewrites, unread=False):
     on = "on the nodes read (the others not covered): " if unread else ""
     unit = [w for w in writes if w[1] == "unit"]
     writes = [w for w in writes if w[1] != "unit"]  # (written at a restart: apply_config's note, not WOULD CHANGE)
-    if not writes:
-        return on + ("only the rewrites under %s" % REWRITES if rewrites else "every node up to date") + (
-            " (cassandra.service: %s)" % UNIT_AT_RESTART if unit else "")
+    if not writes:  # (the same scope: the config files)
+        return on + ("only the rewrites under %s" % REWRITES if rewrites else "every node up to date in its config"
+                     " files") + (" (cassandra.service: %s)" % UNIT_AT_RESTART if unit else "") + (
+            " (%s: apply_config --check shows them)" % NOT_LISTED)
     return on + "WOULD CHANGE: the %s listed above%s (%s: not listed, apply_config --check shows them); whether a" \
         " node restarts: apply_config --check says it (WHAT HAPPENS)" % (
             out.plural(len(set(w[0] for w in writes)), "config file"),
