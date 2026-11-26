@@ -1265,7 +1265,8 @@ KEPT = _Kind("file left as is", "files left as is", "Files left as is",
 MOVED = _Kind("hand edit moved", "hand edits moved", "Hand edits moved to variables",
               "lines added by hand to cassandra-env.sh or a jvm options file that now come from variables; Java gets the"
               " same options, but"
-              " the next apply_config rewrites the file and restarts the node")
+              " the next apply_config rewrites the file (whether the node restarts: apply_config --check, WHAT"
+              " HAPPENS)")
 TO_CHECK = _Kind("thing worth a look", "things worth a look", "Worth a look",
                  "values that work but deserve a look; each says why and what to do")
 DIFFERS = _Kind("setting that differs between nodes", "settings that differ between nodes",
@@ -1421,7 +1422,7 @@ def _kept_entries(report, kept):
         steps.append("in %s: remove %s from cassandra_config_keep_files" % (hosts, name))
         steps.append("check: %s %s what its diff still shows, Ansible would undo"
                      % (unbreakable(plan["check"]), ARROW_RIGHT))
-        steps.append("the same without --check: it writes %s, then restarts the nodes%s" % (
+        steps.append("the same without --check: it writes %s%s; the restarts: its WHAT HAPPENS" % (
             name, " (the same Java options: their Java does not read it)" if plan.get("unread") else ""))
         entries += fill_text("to give it back to Ansible%s:" % (
             " (%s: already given)" % ", ".join(plan["already"]) if plan["already"] else ""), report.width, "      ", "  ")
@@ -1507,8 +1508,9 @@ def _moved_entries(report):
         for variable, members in values:
             files = sorted(set(f for n in report.read if n["name"] in members for f in n.get("rewritten") or []))
             entries += _entry(report, "%s -> %s" % (where, variable), members,
-                              "nothing to do now; the next apply_config rewrites %s in the collection's layout and"
-                              " restarts these nodes (same Java options)" % (", ".join(files) or "cassandra-env.sh"))
+                              "nothing to do now; the next apply_config rewrites %s in the collection's layout (same"
+                              " Java options; whether the nodes restart: apply_config --check, WHAT HAPPENS)"
+                              % (", ".join(files) or "cassandra-env.sh"))
     javas = sorted(set(v for n in report.read for line in n.get("moved") or [] if " -> " in line
                        for v in re.findall(r"\bcassandra_jvm\d+_extra_options\b", line.split(" -> ", 1)[1])))
     if javas:
@@ -1517,7 +1519,7 @@ def _moved_entries(report):
     return entries
 
 
-# a finding's fix made in the inventory, which apply_config writes to the nodes (then restarts them)
+# a finding's fix made in the inventory, which apply_config writes to the nodes
 _BY_APPLY_CONFIG = re.compile(r"^(set |remove cassandra_|lower cassandra_|change -Xmx in cassandra_jvm)")
 
 
@@ -1535,8 +1537,8 @@ def _to_check_entries(report):
             todo = todo.split("; kept on purpose: ")[0]
         todo = todo.strip()
         if _BY_APPLY_CONFIG.match(todo) and "cassandra_authenticator" not in todo:  # (who gets the change: these nodes too, not only the ones added later)
-            who = "these nodes change at their next apply_config (a restart each)" if todo.startswith("remove ") \
-                else "these nodes get it at their next apply_config (a restart each), nodes added later too"
+            who = "these nodes change at their next apply_config" if todo.startswith("remove ") \
+                else "these nodes get it at their next apply_config, nodes added later too"
             todo = todo.replace("; kept on purpose: ", "; %s; kept on purpose: " % who, 1) \
                 if "; kept on purpose: " in todo else todo + "; " + who
         entries += _entry(report, text.replace(" on {nodes}", "").replace("{nodes}", "these nodes"), names,
@@ -1926,20 +1928,20 @@ def _writes_rows(report, writes):
     return rows
 
 
-# a JVM outside its unit's control group (import_running.sh's jvm_untrusted): what apply_config does then, in its
-# own words (its refusal's way out)
-OUTSIDE_UNIT = "Cassandra runs outside its cassandra unit on %s: apply_config refuses to restart it"
-OUTSIDE_UNIT_WAY_OUT = ("Stop that Cassandra (nodetool drain, then stop what started it), start it with its unit"
-                        " (systemctl start cassandra), then run apply_config again.")
+# a JVM outside its unit's control group (import_running.sh's jvm_untrusted): the fact, and where apply_config says
+# what it does about it (its WARNING, with its way out, when the config needs a restart there)
+OUTSIDE_UNIT = "Cassandra on %s runs outside its cassandra unit's control group"
+OUTSIDE_UNIT_THEN = ("a restart by apply_config is refused there; apply_config --check says if one is needed (WARNING"
+                     " with the way out)")
 
 
 def _outside_unit_lines(report, width):
-    """The nodes read whose Cassandra runs outside its unit, said with apply_config's way out -> [line]."""
+    """The nodes read whose Cassandra runs outside its unit -> [line] (the fact, then where apply_config says more)."""
     names = [n["name"] for n in report.read if n.get("outside_unit")]
     if not names:
         return []
     return fill_text(OUTSIDE_UNIT % out.nodes(names), width, "    ", "  ") + fill_text(
-        OUTSIDE_UNIT_WAY_OUT, width, "      ", "  ")
+        OUTSIDE_UNIT_THEN, width, "      ", "  ")
 
 
 # the head's answer to "is Ansible in sync with the cluster?" (the ops callback colours it, the rows under it the
@@ -1953,7 +1955,7 @@ def _sync_lines(report, data, self_check, self_check_error):
     how many nodes), not all verified (nodes not read, parts or files kept by hand, a self-check that did not run:
     what, on how many nodes, a row each), else yes; with yes or not all verified, what the next apply_config
     writes with no effect (_next_writes_lines) -> [line].
-    e.g. ["  in sync with Ansible: yes", "    the next apply_config, no restart:",
+    e.g. ["  in sync with Ansible: yes", "    the next apply_config:",
           "      jvm-server.options     rewritten: heap placement", ...]."""
     width = min(report.width, SYNC_WIDTH)
 
@@ -1966,7 +1968,8 @@ def _sync_lines(report, data, self_check, self_check_error):
                      if check.get("differences"))
     if differing:
         return said("no", ["apply_config would change %s on %s" % (
-            unbreakable(out.plural(sum(differing.values()), "setting")), unbreakable(out.plural(len(differing), "node")))])
+            unbreakable(out.plural(sum(differing.values()), "setting")), unbreakable(out.plural(len(differing), "node")))]) \
+            + _outside_unit_lines(report, width)
     gaps = []
     if self_check_error:
         gaps.append("the self-check did not run")
@@ -2082,15 +2085,23 @@ WORDS_USED = (
 REWRITES = "APPLY_CONFIG WILL REWRITE (no effect)"
 
 
-def _apply_config_expects(writes, rewrites):
-    """What apply_config --check --diff shows on the nodes imported: the files the head lists under "the next
-    apply_config" (writes, _writes'), the rewrites with no effect (rewrites); whether a node restarts is its own to
-    say -> text."""
+# the nodes read the next step's check names (--limit), when some were not read
+LIMIT_READ = 10
+# what the files listed under "the next apply_config" leave out: apply_config --check shows them
+NOT_LISTED = "Medusa, packages, the JMX users"
+
+
+def _apply_config_expects(writes, rewrites, unread=False):
+    """What apply_config --check --diff shows on the nodes imported (unread: on the nodes read, the others not
+    covered): the config files the head lists under "the next apply_config" (writes, _writes'), the rewrites with no
+    effect (rewrites); whether a node restarts is its own to say -> text."""
+    on = "on the nodes read (the others not covered): " if unread else ""
     if not writes:
-        return "only the rewrites under %s" % REWRITES if rewrites else "every node up to date"
-    return "WOULD CHANGE: the %s listed above%s; whether a node restarts: apply_config --check says it (WHAT" \
-        " HAPPENS)" % (out.plural(len(set(w[0] for w in writes)), "file"),
-                       ", and the rewrites under %s" % REWRITES if rewrites else "")
+        return on + ("only the rewrites under %s" % REWRITES if rewrites else "every node up to date")
+    return on + "WOULD CHANGE: the %s listed above%s (%s: not listed, apply_config --check shows them); whether a" \
+        " node restarts: apply_config --check says it (WHAT HAPPENS)" % (
+            out.plural(len(set(w[0] for w in writes)), "config file"),
+            ", and the rewrites under %s" % REWRITES if rewrites else "", NOT_LISTED)
 
 
 def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, changes, changed, removed, same, writes,
@@ -2112,12 +2123,15 @@ def _next_lines(report, steps, reviews, self_check_ok, inventory_dir, in_git, ch
         items.append(("Review the files written, then keep them: %s." % unbreakable("git diff && git commit") if git
                       else "Review the files written in %s." % out.path_from(inventory_dir, report.cwd), []))
     if self_check_ok:
+        # (the nodes read only, when some were not: what the import compared; named up to LIMIT_READ of them, else
+        # the expected line says the others are not covered)
+        limit = report.names if report.unread and len(report.names) <= LIMIT_READ else None
         apply_check = out.command("apply_config", inventory=report.inventory or None, hosts=report.hosts or None,
-                                  extra=["--check", "--diff"], cwd=report.cwd)
+                                  limit=limit, extra=["--check", "--diff"], cwd=report.cwd)
         topology = out.command("topology", inventory=report.inventory or None, hosts=report.hosts or None, extra=["--check"],
                                cwd=report.cwd)
         items.append(("Check that the inventory changes nothing on the nodes (both commands only look):",
-                      [(apply_check, _apply_config_expects(writes, rewrites)),
+                      [(apply_check, _apply_config_expects(writes, rewrites, bool(report.unread))),
                        (topology, "nothing to do")]))
     if not items:
         items.append(("Nothing: the inventory matches the nodes.", []))

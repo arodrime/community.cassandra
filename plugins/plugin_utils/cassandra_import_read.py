@@ -1502,7 +1502,7 @@ def _difference_lines(name, rendered, live, ops):
 
 # the node's JVM_OPTS lines in the branch of the LOCAL_JMX test its running JVM does not take (jvm_args.jmx_branch_not_run)
 BRANCH_NOT_RUN_NOTE = ("cassandra-env.sh: %s in the %s JMX branch these nodes do not run (LOCAL_JMX=%s): no effect;"
-                       " apply_config writes the stock branch without %s, no restart")
+                       " apply_config writes the stock branch without %s")
 
 
 def branch_not_run_note(count, runs):
@@ -1515,7 +1515,7 @@ def branch_not_run_note(count, runs):
 # (jvm_args.password_file_line_inert)
 PASSWORD_FILE_NOTE = ("cassandra-env.sh: -Dcom.sun.management.jmxremote.password.file commented out, the JVM never reads"
                       " it (JMX authentication off, no JMX agent, JAAS login or authorizer): no effect; apply_config"
-                      " writes the stock line, no restart")
+                      " writes the stock line")
 
 
 # the node's JVM_OPTS lines in the remote JMX branch, the role's outside it (jvm_args.remote_branch_moved)

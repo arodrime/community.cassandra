@@ -418,7 +418,7 @@ def _render(variables, facts, live, conf_dir="", templates=None, script=None):
             wanted.append(("cassandra.service", "cassandra_service/templates/cassandra.service.j2"))
         elif script:
             errors.append("cassandra.service: the node starts Cassandra with the init script %s (%s), the roles would"
-                          " start it with their systemd unit from its next restart" % (
+                          " start it with their systemd unit at its next start" % (
                               script[0], "modified since its package installed it" if script[1] == "modified"
                               else "of the package %s, as installed" % script[1] if script[1] else "of no package"))
         else:
@@ -914,8 +914,11 @@ def _compare_files(rendered, live, node_environment=None, role_environment=None,
                                           password_line=PASSWORD_FILE_NOTE in notes, release=release)}
 
 
-# the files of other roles than cassandra_config the import renders (apply_config_writes leaves them out)
-OTHER_ROLES_FILES = ("cassandra.service", "medusa.ini")
+# the files of other roles than cassandra_config the import renders that apply_config_writes leaves out (medusa.ini:
+# cassandra_medusa's compare says it); cassandra_service's unit is in (written when its text differs, its keys the
+# node's: the self-check's)
+OTHER_ROLES_FILES = ("medusa.ini",)
+UNIT_WRITTEN = "layout (apply_config --check says when it writes it)"
 # a JVM options line of the heap (its placement: the role writes it in jvm-server.options)
 HEAP_LINE = re.compile(r"^-Xm[snx]")
 
@@ -969,7 +972,7 @@ def apply_config_writes(rendered, live, storage_dir="", series="", java="", pass
             why.append("%s removed (Cassandra %s rejects %s)" % (", ".join(rejected), release,
                                                                  "it" if len(rejected) == 1 else "them"))
         else:
-            why.append("layout")
+            why.append(UNIT_WRITTEN if name == "cassandra.service" else "layout")
         if name == "cassandra-env.sh" and password_line:
             why.append("the JMX password file option back (never read)")
         diff = [] if name == "jmxremote.password" else list(difflib.unified_diff(
@@ -997,8 +1000,8 @@ def _apply_config_restarts(rendered, live, storage_dir, series, java, running, n
                                                        environ, [], running.get("facts"),
                                                        running.get("heapdump_before") or ""):
         return []
-    return ["%s: apply_config would rewrite %s and restart Cassandra: its own proof does not show the running JVM"
-            " keeps its arguments" % (", ".join(written), "it" if len(written) == 1 else "them")]
+    return ["%s: apply_config would rewrite %s, and its own proof does not show the running JVM keeps its"
+            " arguments" % (", ".join(written), "it" if len(written) == 1 else "them")]
 
 
 def _both_as_read(rendered, live, node_environment, role_environment, series, running):
@@ -1113,7 +1116,7 @@ def _jvm_differences(jvm_rendered, jvm_live, by_file, differences, heap, notes, 
         differences = [d for d in differences if not any(d in by_file.get(name, []) for name in rewritten)
                        or any(d.startswith("%s: %s:" % (f, k)) for k, f in apart.items())]
         notes.append("%s: cassandra_config rewrites %s in its own layout; the JVM gets the same arguments from them at"
-                     " its next restart (worked out from the running JVM's)%s" % (
+                     " its next start (worked out from the running JVM's)%s" % (
                          ", ".join(rewritten), "it" if len(rewritten) == 1 else "them",
                          ", but for %s, above" % ", ".join(sorted(apart)) if apart else ""))
         heap = []

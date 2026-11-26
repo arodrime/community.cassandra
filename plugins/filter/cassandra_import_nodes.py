@@ -386,7 +386,7 @@ def _notes(item, host, hv, read, config, perms, medusa, repo, set_ansible_host, 
     if read and hv.get("import_cluster_newer_files", []):
         notes.append("%s changed since the running Cassandra started (%s)" % (
             ", ".join(hv["import_cluster_newer_files"]), "apply_config's record of that start"
-            if hv.get("import_cluster_newer_from") == "record" else "written after it started"))
+            if hv.get("import_cluster_newer_from") == "record" else "changed after it started"))
     untrusted = (hv.get("import_cluster_unit") or {}).get("jvm_untrusted")
     if read and untrusted:
         notes.append("the running JVM's arguments and environment not used to prove the roles' files give it the same:"

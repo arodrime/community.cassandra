@@ -43,20 +43,21 @@ CONVERGENCE — towards one group, every setting in group_vars/big/
       line 60:  + -XX:+UseNUMA   → cassandra_jvm11_extra_options: [-XX:+UseNUMA] (if no other line of the file sets it)
     → to give it back to the roles: set cassandra_jvm11_extra_options in host_vars of 19 nodes (cass031, cass032, cass033, cass034, cass035, cass036, cass037,
       cass038, cass039, cass040, cass041, cass042, cass043, cass044, cass046, cass047, cass048, cass049, cass050) (in group_vars/big/ instead, the 70 other
-      nodes get them too, then restart); then take jvm11-server.options out of cassandra_config_keep_files (the same host_vars): apply_config writes it, then
-      restarts the node; check first: ansible-playbook community.cassandra.apply_config --check --diff (what its diff still shows, the roles would revert)
+      nodes get them too); then take jvm11-server.options out of cassandra_config_keep_files (the same host_vars): apply_config writes it; check first:
+      ansible-playbook community.cassandra.apply_config --check --diff (what its diff still shows, whether the node restarts, the roles would revert)
   logback.xml   kept on cass061, cass062, cass063 (3 nodes)
       line 40:  - <logger name="org.apache.cassandra" level="DEBUG"/>   + <logger name="org.apache.cassandra" level="INFO"/>   → cassandra_log_level_cassandra:
           INFO
       line 52:  + <logger name="com.example.audit" level="WARN"/>   → no variable
     → to give it back to the roles: set cassandra_log_level_cassandra in host_vars of 3 nodes (cass061, cass062, cass063) (in group_vars/big/ instead, the 86
-      other nodes get them too, then restart); undo the edits no variable carries on the nodes, or keep the file; then take logback.xml out of
-      cassandra_config_keep_files (the same host_vars): apply_config writes it, then restarts the node; check first:
-      ansible-playbook community.cassandra.apply_config --limit cass061,cass062,cass063 --check --diff (what its diff still shows, the roles would revert)
+      other nodes get them too); undo the edits no variable carries on the nodes, or keep the file; then take logback.xml out of cassandra_config_keep_files
+      (the same host_vars): apply_config writes it; check first:
+      ansible-playbook community.cassandra.apply_config --limit cass061,cass062,cass063 --check --diff (what its diff still shows, whether the node restarts,
+      the roles would revert)
   cassandra-env.sh   kept on cass090 (1 node)
       line 300:  + JVM_OPTS="$JVM_OPTS -Dcassandra.example=1"   → cassandra_jvm_extra_options: [-Dcassandra.example=1]
       line 301:  + export KEYSTORE_PASSWORD=****   → no variable
-    → to give it back to the roles: set cassandra_jvm_extra_options in host_vars/cass090/ (in group_vars/big/ instead, the 88 other nodes get them too, then
-      restart); undo the edits no variable carries on the nodes, or keep the file; then take cassandra-env.sh out of cassandra_config_keep_files (the same
-      host_vars): apply_config writes it, then restarts the node; check first: ansible-playbook community.cassandra.apply_config --limit cass090 --check --diff
-      (what its diff still shows, the roles would revert)
+    → to give it back to the roles: set cassandra_jvm_extra_options in host_vars/cass090/ (in group_vars/big/ instead, the 88 other nodes get them too); undo
+      the edits no variable carries on the nodes, or keep the file; then take cassandra-env.sh out of cassandra_config_keep_files (the same host_vars):
+      apply_config writes it; check first: ansible-playbook community.cassandra.apply_config --limit cass090 --check --diff (what its diff still shows, whether
+      the node restarts, the roles would revert)

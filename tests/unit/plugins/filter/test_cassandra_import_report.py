@@ -1065,8 +1065,7 @@ def test_auto_bootstrap_false_kept_on_its_nodes_with_a_warning():
     # an entry of two lines to review: the finding, then what to do and how to keep it
     assert ("    auto_bootstrap false: a node that loses its data would restart empty, without streaming it back   all -"
             " node3 (2 nodes)\n      remove cassandra_auto_bootstrap (the default is true); these nodes change at their"
-            " next apply_config (a restart each); kept on purpose: list\n      auto_bootstrap_false in"
-            " cassandra_settings_kept_on_purpose") in text
+            " next apply_config; kept on purpose: list auto_bootstrap_false in\n      cassandra_settings_kept_on_purpose") in text
     every = [node(i) for i in range(1, 4)]
     for n in every:
         n["vars"]["cassandra_auto_bootstrap"] = False
@@ -1187,8 +1186,8 @@ def test_a_kept_options_file_its_java_does_not_read_carries_nothing():
         "1. in host_vars/node4/main.yml: remove jvm8-server.options from cassandra_config_keep_files",
         "2. check: ansible-playbook community.cassandra.apply_config --limit node4 --check --diff → what its diff still"
         " shows, Ansible would undo",
-        "3. the same without --check: it writes jvm8-server.options, then restarts the nodes (the same Java options:"
-        " their Java does not read it)"]
+        "3. the same without --check: it writes jvm8-server.options (the same Java options: their Java does not read"
+        " it); the restarts: its WHAT HAPPENS"]
     text = "\n".join(lines)
     assert "cassandra_heap_size" not in text and "cassandra_jvm8_extra_options" not in text
     # the Java that reads it (Java 8): its heap and options carried as before
@@ -1223,7 +1222,7 @@ def test_a_kept_file_given_back_step_by_step():
     assert "1. in host_vars/<node>/main.yml of 3 nodes: cassandra_jmx_rmi_hostname: <each node's own address>" in steps
     assert "2. in host_vars/<node>/main.yml of 3 nodes: remove cassandra-env.sh from cassandra_config_keep_files" in steps
     assert "3. check: ansible-playbook community.cassandra.apply_config --limit node1,node2,node3 --check --diff" in steps
-    assert "4. the same without --check: it writes cassandra-env.sh, then restarts the nodes" in steps
+    assert "4. the same without --check: it writes cassandra-env.sh; the restarts: its WHAT HAPPENS" in steps
     # edits no variable carries: nothing to do while wanted
     assert "1 edit that no variable carries (each under DETAILS): Ansible leaves the file as each node has it; nothing" \
         " to do while they are wanted" in " ".join(flat[flat.index("logback.xml (the logging settings) all (3 nodes)"):])
@@ -1298,7 +1297,7 @@ def test_worth_a_look_says_which_nodes_get_the_change():
     small = node(1)
     small["vars"]["cassandra_heap_size"] = "1G"
     review = " ".join(" ".join(line.split()) for line in section(report([small], details=False), "WORTH A LOOK"))
-    assert "these nodes get it at their next apply_config (a restart each), nodes added later too" in review
+    assert "these nodes get it at their next apply_config, nodes added later too" in review
 
 
 def test_os_tuning_and_what_this_report_is_wrap_never_cut():
@@ -1364,11 +1363,11 @@ def test_self_check_stop_os_finest_switch_on_its_nodes():
 
 def test_self_check_stop_unit_way_out():
     script = ("cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified"
-              " since its package installed it), the roles would start it with their systemd unit from its next restart")
+              " since its package installed it), the roles would start it with their systemd unit at its next start")
     lines = stop([node(1), node(2)], {"node1": {"differences": [script]}}, width=400)
     assert lines[3:5] == ["  cassandra.service — 1 node    node1", "    the node starts Cassandra with the init script"
                           " /etc/rc.d/init.d/cassandra (modified since its package installed it), the roles would start"
-                          " it with their systemd unit from its next restart"]
+                          " it with their systemd unit at its next start"]
     assert [line for line in lines if re.match(r"^    keep the unit \(or init script\) Cassandra is started by as on"
                                                r" this node +-e import_keep_hand_edits=unit$", line)]
 
@@ -1402,8 +1401,9 @@ def test_next_step_with_files_moved_and_rewrites_names_the_section():
                    details=False)
     assert "APPLY_CONFIG WILL REWRITE (no effect)" in lines
     steps = " ".join(" ".join(line.split()) for line in section(lines, "WHAT TO DO NEXT"))
-    assert ("expected: WOULD CHANGE: the 1 file listed above, and the rewrites under APPLY_CONFIG WILL REWRITE (no"
-            " effect); whether a node restarts: apply_config --check says it (WHAT HAPPENS) ansible-playbook") in steps
+    assert ("expected: WOULD CHANGE: the 1 config file listed above, and the rewrites under APPLY_CONFIG WILL REWRITE"
+            " (no effect) (Medusa, packages, the JMX users: not listed, apply_config --check shows them); whether a node"
+            " restarts: apply_config --check says it (WHAT HAPPENS) ansible-playbook") in steps
 
 
 def test_parts_kept_said_in_one_sentence():
@@ -1559,8 +1559,9 @@ def test_in_sync_yes_lists_the_next_apply_config_s_writes_a_row_each():
                            "      their diffs: reports/my_cluster/report.details.txt",
                            "      rewrites 1 other item with no effect"]
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "expected: WOULD CHANGE: the 5 files listed above, and the rewrites under APPLY_CONFIG WILL REWRITE (no" \
-        " effect); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" in said, said
+    assert "expected: WOULD CHANGE: the 5 config files listed above, and the rewrites under APPLY_CONFIG WILL REWRITE" \
+        " (no effect) (Medusa, packages, the JMX users: not listed, apply_config --check shows them); whether a node" \
+        " restarts: apply_config --check says it (WHAT HAPPENS)" in said, said
     # the diffs in the details, once per group of nodes with the same one
     details = report([node(i) for i in range(1, 4)], self_check=checks, details=True)
     at = details.index("REWRITES OF THE NEXT APPLY_CONFIG  (their diffs)")
@@ -1723,22 +1724,30 @@ def test_the_head_says_what_is_written_never_a_restart():
         "                             rejects it)",
         "                             on node1"]
     said = " ".join(" ".join(line.split()) for line in lines)
-    assert "expected: WOULD CHANGE: the 3 files listed above; whether a node restarts: apply_config --check says it" \
-        " (WHAT HAPPENS)" in said, said
+    assert "expected: WOULD CHANGE: the 3 config files listed above (Medusa, packages, the JMX users: not listed," \
+        " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
+        in said, said
     for text in (report([node(1), node(2)], self_check=checks, details=False),
                  report([node(1), node(2)], self_check=checks, details=True), lines):
         assert not [line for line in text if re.search(r"\b(no restart|a restart)\b", line)
                     and ("apply_config" in line or line.startswith("      "))], text
-    # Cassandra outside its unit on node2 (observed): apply_config refuses to restart it, its way out in its words
-    lines = report([node(1), node(2, outside_unit=True)], self_check=checks, screen=True, width=200)
-    said = " ".join(" ".join(line.split()) for line in sync(lines))
-    assert "Cassandra runs outside its cassandra unit on node2: apply_config refuses to restart it Stop that" \
-        " Cassandra (nodetool drain, then stop what started it), start it with its unit (systemctl start" \
-        " cassandra), then run apply_config again." in said, said
+    # Cassandra outside its unit on node2 (observed), on every head: where apply_config says what it does about it,
+    # no instruction from the import (round 5)
+    for ok, differences in ((True, []), (False, ["cassandra.yaml: x: node has 1, import would write 2"])):
+        found = dict(checks, node2=dict(checks["node2"], differences=differences))
+        lines = report([node(1), node(2, outside_unit=True)], self_check=found, screen=True, width=200, ok=ok,
+                       strict=False)
+        said = " ".join(" ".join(line.split()) for line in sync(lines))
+        assert "Cassandra on node2 runs outside its cassandra unit's control group a restart by apply_config is" \
+            " refused there; apply_config --check says if one is needed (WARNING with the way out)" in said, said
+        assert "nodetool drain" not in " ".join(lines)
     # a node not read: the rows say which nodes they cover
     lines = report([node(1), node(2, read=False)], self_check={"node1": checks["node1"]}, screen=True, width=200,
                    ok=True, allow_unread=True)
     assert "      on the nodes read: node1" in sync(lines), sync(lines)
+    said = " ".join(" ".join(line.split()) for line in lines)
+    assert "apply_config --limit node1 --check --diff" in said and \
+        "expected: on the nodes read (the others not covered): WOULD CHANGE" in said, said
     # the self-check found differences: no diffs of rewrites "with no effect" in the details
     checks["node2"] = dict(checks["node2"], differences=["cassandra.yaml: x: node has 1, import would write 2"])
     details = report([node(1), node(2)], self_check=checks, ok=False, details=True)
@@ -1751,8 +1760,9 @@ def test_the_next_step_expects_the_writes_then_every_node_up_to_date():
     checks = {"node1": {"differences": [], "notes": [], "writes": PROD_WRITES[:1]},
               "node2": {"differences": [], "notes": [], "writes": []}}
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
-    assert "expected: WOULD CHANGE: the 1 file listed above; whether a node restarts: apply_config --check says it" \
-        " (WHAT HAPPENS)" in said, said
+    assert "expected: WOULD CHANGE: the 1 config file listed above (Medusa, packages, the JMX users: not listed," \
+        " apply_config --check shows them); whether a node restarts: apply_config --check says it (WHAT HAPPENS)" \
+        in said, said
     checks["node1"]["writes"] = []
     said = " ".join(" ".join(line.split()) for line in report([node(1), node(2)], self_check=checks, details=False))
     assert "expected: every node up to date" in said and "WOULD CHANGE" not in said
@@ -1833,3 +1843,48 @@ def test_what_stays_per_node_though_every_node_has_it():
     nodes[0]["vars"] = dict(nodes[0]["vars"], cassandra_install_tools=True)
     layout = cassandra_inventory_layout(nodes, "My Cluster")
     assert "cassandra_install_tools" not in layout["group_vars"]["my_cluster"]
+
+
+# (audit round 5) the import says what it observed and what apply_config writes; whether a node restarts is
+# apply_config's to say (--check, WHAT HAPPENS). The lines with a restart word the import may still print, each one
+# not a prediction of the import's:
+RESTART_WORDS_ALLOWED = (
+    r"WHAT HAPPENS|whether (a|the) nodes? restarts?",  # (where apply_config says it, a line of it wrapped)
+    r"a restart by apply_config is refused there",  # (apply_config's rule for a JVM outside its unit, its --check)
+    r"its plan says what restarts",  # (the same, said before)
+    r"starts or restarts no node",  # (the import itself)
+    r"Restart=|cassandra_service_restart",  # (the unit's systemd policy, read on the node)
+    r"would restart empty|would not start again with .* after a restart",  # (Cassandra's own behaviour, a finding)
+    r"restart pending on a new JDK|once restarted",  # (the JDK the running JVM runs, removed since its start)
+    # the convergence plan of DIFFERENT ON SOME NODES (cassandra_import_convergence.KINDS, shared with drift): a
+    # decision of its own, kept
+    r"nodes? change, (then restart|no restart|restart unknown)|then restart|no restart \(",
+)
+
+
+def restart_lines(lines):
+    return [line for line in lines if re.search(r"\brestart(s|ed)?\b", line, re.I)
+            and not any(re.search(allowed, line) for allowed in RESTART_WORDS_ALLOWED)]
+
+
+def test_no_restart_said_by_the_import_but_apply_config_s():
+    from ansible_collections.community.cassandra.plugins.plugin_utils.cassandra_import_read import (
+        branch_not_run_note, PASSWORD_FILE_NOTE)
+    moved = ['cassandra-env.sh: JVM_OPTS="$JVM_OPTS -Dfoo=1" -> cassandra_jvm_extra_options']
+    nodes = [node(1, moved=moved, rewritten=["cassandra-env.sh"], normalized=[PASSWORD_FILE_NOTE]),
+             node(2, moved=moved, rewritten=["cassandra-env.sh"], normalized=[branch_not_run_note(2, "local")],
+                  outside_unit=True),
+             node(3, keep={"cassandra_config_keep_files": ["jvm8-server.options"]}),
+             node(4, read=False)]
+    nodes[0]["vars"] = dict(nodes[0]["vars"], cassandra_heap_size="1G")
+    checks = {"node%d" % i: {"differences": [], "notes": [PASSWORD_FILE_NOTE], "writes": PROD_WRITES} for i in (1, 2, 3)}
+    seen = []
+    for kwargs in ({}, {"screen": True}, {"details": True}, {"details": False}):
+        seen += report(nodes, self_check=checks, allow_unread=True, **kwargs)
+    checks["node1"] = dict(checks["node1"], differences=["cassandra.yaml: x: node has 1, import would write 2"])
+    seen += report(nodes, self_check=checks, ok=False, allow_unread=True, strict=False, screen=True)
+    with open(os.path.join(os.path.dirname(__file__), "fixtures", "import_88_report.txt")) as f:
+        seen += f.read().split("\n")
+    assert restart_lines(seen) == []
+    # (the guard itself: a restart said by the import is caught)
+    assert restart_lines(["    the next apply_config, no restart:", "rewrites the file and restarts the node"])

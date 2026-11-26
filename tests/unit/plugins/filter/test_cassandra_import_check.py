@@ -1492,7 +1492,7 @@ def test_init_script_with_the_roles_unit_is_a_difference():
     keep = {"cassandra_linux_manage": False, "cassandra_firewall_manage": False}
     assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"}, keep=keep) == [
         "cassandra.service: the node starts Cassandra with the init script /etc/rc.d/init.d/cassandra (modified since its"
-        " package installed it), the roles would start it with their systemd unit from its next restart"]
+        " package installed it), the roles would start it with their systemd unit at its next start"]
     assert "(of no package)" in unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": ""}, keep=keep)[0]
     # kept by you (cassandra_service_unit_manage: false): nothing compared
     assert unit_check({"file": SCRIPT, "script": SCRIPT, "pkg_script": "modified"},
@@ -2097,3 +2097,15 @@ def test_a_file_apply_config_creates_is_in_the_writes():
     assert "+-XX:+UseParNewGC" in out[0]["diff"]
     # (the file of the running Java missing: a difference, not a write of no effect)
     assert apply_config_writes({"jvm11-server.options": "-XX:+UseG1GC\n"}, {}, series="41x", java="11") == []
+
+
+def test_the_unit_written_for_its_layout_is_listed():
+    # (audit round 5) the unit of the same keys in another layout: cassandra_service writes it (apply_config --check
+    # says when), listed with the config files; medusa.ini is not (Medusa's compare says it)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import apply_config_writes
+    role = {"cassandra.service": "[Unit]\nDescription=Cassandra\n\n[Service]\nUser=cassandra\n",
+            "medusa.ini": "[cassandra]\nkey = 1\n"}
+    node = {"cassandra.service": "# by hand\n[Unit]\nDescription=Cassandra\n[Service]\nUser=cassandra\n",
+            "medusa.ini": "[cassandra]\nkey=1\n"}
+    assert [(w["file"], w["what"], w["why"]) for w in apply_config_writes(role, node)] == [
+        ("cassandra.service", "rewritten", ["layout (apply_config --check says when it writes it)"])]

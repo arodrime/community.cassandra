@@ -52,7 +52,7 @@ def test_the_node_says_what_it_observed():
     # (audit round 4) the note says the files and where that comes from, no claim about what applies them; a JVM
     # outside its unit's control group is flagged (the head says it, with apply_config's way out)
     from ansible_collections.community.cassandra.tests.unit.import_nodes import node
-    for basis, words in (("record", "apply_config's record of that start"), ("times", "written after it started")):
+    for basis, words in (("record", "apply_config's record of that start"), ("times", "changed after it started")):
         n = node({"import_cluster_newer_files": ["cassandra.yaml"], "import_cluster_newer_from": basis})
         assert "cassandra.yaml changed since the running Cassandra started (%s)" % words in n["notes"], n["notes"]
         assert not [note for note in n["notes"] if "rolling_restart" in note or "does not restart" in note]

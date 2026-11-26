@@ -707,7 +707,7 @@ def test_lines_in_the_remote_jmx_branch_not_run_have_no_effect(tmp_path, series,
     assert node["hand_edits"] == [] and not [k for k in node["vars"] if "rmi" in k or k == "cassandra_jmx_users"]
     said = [n for n in node["normalized"] if "remote JMX branch these nodes do not run" in n]
     assert said == ["cassandra-env.sh: %d line%s in the remote JMX branch these nodes do not run (LOCAL_JMX=yes): no"
-                    " effect; apply_config writes the stock branch without %s, no restart"
+                    " effect; apply_config writes the stock branch without %s"
                     % (len(lines), "" if len(lines) == 1 else "s", "it" if len(lines) == 1 else "them")]
     out = check(files, series, java=java, cmdline=cmdline)
     assert out["differences"] == [] and [n for n in out["notes"] if "do not run" in n]
@@ -992,8 +992,8 @@ def test_the_self_check_puts_the_files_to_apply_config_s_proof(tmp_path):
     running = {"cmdline": cmdline, "newer": []}
     rendered = dict(files, **{"jvm-server.options": files["jvm-server.options"] + "-Dzorglub.flag=true\n"})
     assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17", running, {}) == [
-        "jvm-server.options: apply_config would rewrite it and restart Cassandra: its own proof does not show the"
-        " running JVM keeps its arguments"]
+        "jvm-server.options: apply_config would rewrite it, and its own proof does not show the running JVM keeps its"
+        " arguments"]
     # the same arguments (a comment), the JVM not known, or a file written since it started: nothing said
     rendered = dict(files, **{"jvm-server.options": files["jvm-server.options"] + "# zorglub\n-XX:+UseNUMA\n"})
     assert _apply_config_restarts(rendered, files, "/var/lib/cassandra", "50x", "17", running, {}) == []
@@ -1209,9 +1209,9 @@ def test_report_moved_cleanup_and_next(tmp_path):
     at = next(i for i, line in enumerate(lines) if line.startswith("  Hand edits moved to variables: "))
     assert re.match(r"^    cassandra-env.sh line \d+: -Xms8G -Xmx8G -XX:\+AlwaysPreTouch -> cassandra_heap_size: 8G;"
                     r" cassandra_jvm17_extra_options   all \(2 nodes\)$", lines[at + 2])
-    assert " ".join(x.strip() for x in lines[at + 3:at + 5]) == (
+    assert " ".join(x.strip() for x in lines[at + 3:at + 5]).startswith(
         "nothing to do now; the next apply_config rewrites cassandra-env.sh, jvm17-server.options in the collection's"
-        " layout and restarts these nodes (same Java options)")
+        " layout (same Java options; whether the nodes restart:")
     assert lines[at + 5:at + 7] == [  # (a blank line between entries)
         "", "    cassandra_jvm17_extra_options: read by that Java only; after update_java, move them to the new Java's"]
     at = lines.index("  Java options the running Java does not use (left out of the lines moved, else left as they are)")
@@ -2585,7 +2585,7 @@ def test_a_line_only_in_the_remote_jmx_branch_of_a_local_jmx_node_is_no_differen
     assert out["differences"] == []
     assert [n for n in out["notes"] if "JMX branch" in n] == [
         "cassandra-env.sh: 1 line in the remote JMX branch these nodes do not run (LOCAL_JMX=yes): no effect;"
-        " apply_config writes the stock branch without it, no restart"]
+        " apply_config writes the stock branch without it"]
 
 
 def test_a_line_only_in_the_local_jmx_branch_of_a_remote_jmx_node_has_no_effect(tmp_path):
@@ -2595,7 +2595,7 @@ def test_a_line_only_in_the_local_jmx_branch_of_a_remote_jmx_node_has_no_effect(
     cmdline = launch(files, "17", tmp_path)
     assert "-Dcassandra.jmx.remote.port=7199" in cmdline.split("\0") and "zorglub" not in cmdline
     note = ("cassandra-env.sh: 1 line in the local JMX branch these nodes do not run (LOCAL_JMX=no): no effect;"
-            " apply_config writes the stock branch without it, no restart")
+            " apply_config writes the stock branch without it")
     inventory, layout, node = imported(files, "50x", "17", cmdline)
     assert node["hand_edits"] == [] and note in node["normalized"]
     out = check(files, "50x", java="17", cmdline=cmdline)

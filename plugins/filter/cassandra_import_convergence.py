@@ -534,7 +534,7 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
                 "the node" if len(nodes) == 1 else "these nodes", java), width, "    ", "  ")
             lines += fill_text("its edits have no effect on the running JVM: no variable carries them", width, "    ")
             lines += fill_text("%s to give it back to the roles: take %s out of cassandra_config_keep_files (%s):"
-                               " apply_config writes the role's, then restarts the node (the same Java options);"
+                               " apply_config writes the role's (the same Java options; whether the node restarts: its WHAT HAPPENS);"
                                " check first: %s" % (
                                    ARROW_RIGHT, name, "host_vars/%s/" % nodes[0] if len(nodes) == 1 else
                                    "host_vars of %s (%s)" % (out.plural(len(nodes), "node"), out.full_list(nodes)),
@@ -571,13 +571,13 @@ def _kept_lines(kept, layout, read, who, width, inventory, hosts, cwd):
         elif sorted(nodes) == everyone:
             place = "group_vars/%s/" % layout["cluster_group"]
         else:
-            place = "%s (in group_vars/%s/ instead, the %s get them too, then restart)" % (
+            place = "%s (in group_vars/%s/ instead, the %s get them too)" % (
                 alone, layout["cluster_group"], out.plural(len(everyone) - len(nodes), "other node"))
         how = ("set %s in %s%s" % (", ".join(sorted(carried)), place,
                                    "; undo the edits no variable carries on the nodes, or keep the file" if loose else "")
                if carried else "no variable carries these edits: undo them on the nodes, or keep the file")
         lines += fill_text("%s to give it back to the roles: %s; then take %s out of cassandra_config_keep_files (%s):"
-                           " apply_config writes it, then restarts the node; check first: %s (what its diff still shows,"
+                           " apply_config writes it; check first: %s (what its diff still shows, whether the node restarts,"
                            " the roles would revert)" % (ARROW_RIGHT, how, name,
                                                          "the same host_vars" if place.startswith(alone) else alone,
                                                          unbreakable(check_command(nodes, "restart", inventory, hosts, cwd))),
