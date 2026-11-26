@@ -55,12 +55,16 @@
 - name: Stop, a staged file is not as this run staged it
   ansible.builtin.fail:
     msg: |-
-      staged file not as staged: {{ (cassandra_config_staged_moved.stderr | trim).split(_not_as_staged) | last }}
+      staged file not as staged: {{ _wrong }}
       nothing moved: live config files untouched, Cassandra not restarted
-      WAY OUT  make config changes in the inventory: a resume stages the files again from it (what a staged file holds is replaced), then resume
+      WAY OUT  {{ _way_out }}
   when: cassandra_config_staged_moved.rc != 0
   vars:
+    _wrong: "{{ (cassandra_config_staged_moved.stderr | trim).split(_not_as_staged) | last }}"
     _not_as_staged: "staged file not as staged, nothing moved: "
+    _way_out: >-
+      make config changes in the inventory: a resume stages the files again from it (what a staged file holds is
+      replaced), then resume
 
 - name: Report
   ansible.builtin.include_role:

@@ -56,7 +56,8 @@ RC1_NAMES_NOW_IN_PYTHON = frozenset((
     "cassandra_import_keep_parts", "cassandra_jmx_ssl_", "cassandra_leading_comments",
     "cassandra_prometheus_config_error", "cassandra_storage_mode_back_stop", "cassandra_storage_mode_given_wrong",
     "cassandra_storage_mode_into_none_stop", "cassandra_storage_mode_jump_stop", "cassandra_storage_mode_kept_stop",
-    "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written"))
+    "cassandra_storage_mode_stopped_unsure", "cassandra_storage_mode_unsure", "cassandra_storage_mode_written",
+    "cassandra_config_answer"))  # (cassandra_config's question registered it; the shared one asks it now)
 # - names the playbooks write since rc1 that are no variables, so unknown as in rc1 (cassandra_seed_hosts given with
 #   -e is refused as a typo of cassandra_seeds)
 NOT_VARIABLES = frozenset((

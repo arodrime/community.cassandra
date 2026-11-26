@@ -112,7 +112,7 @@ def test_preflight_stops_on_a_node_not_reached_with_that_text():
         tasks = [t for play in yaml.safe_load(f) for t in play.get("tasks", [])]
     answers = next(t for t in tasks if t["name"] == "Every node answers")["ansible.builtin.assert"]["fail_msg"]
     assert "cassandra_not_reached(" in answers and "Restart" not in answers and "replace" not in answers
-    assert "inventory_alone='-e drift_nodes=false' if _cassandra_apply_config_compare_only" in answers
+    assert "inventory_alone=_alone" in answers
 
 
 def test_preflight_mixed_versions_as_rows_with_exact_ways_out():

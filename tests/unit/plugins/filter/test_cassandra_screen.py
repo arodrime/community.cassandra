@@ -260,7 +260,7 @@ def test_the_guide_s_plan_is_the_screen_s():
     with open(path, encoding="utf-8") as f:
         doc = f.read().split("\n")
     first = doc.index("    ADD NODE  node4, node5 into dc1 of prod")
-    shown = [line[4:] for line in doc[first:doc.index("    Add node4, node5 into dc1 of prod? Answer yes or no:")]]
+    shown = [line[4:] for line in doc[first:doc.index("    Cluster: prod")]]  # (the question: confirm_ask.yml)
     spec = {"operation": "add_node", "summary": "node4, node5 into dc1 of prod",
             "intro": ["one node at a time; each streams its share of the data, progress every 30s, stop after 30m"
                       " without progress"],

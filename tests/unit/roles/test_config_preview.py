@@ -410,9 +410,9 @@ def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
 
 @pytest.mark.parametrize("initialized, expected", [
     (True, "Config changes not confirmed on node1 (not blank: Cassandra is running). Run interactively"
-           " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),
+           " and answer yes, or set cassandra_config_confirm: false to apply without asking."),
     (False, "Config changes not confirmed on node1. Run interactively"
-            " and answer 'yes', or set cassandra_config_confirm: false to apply without asking."),
+            " and answer yes, or set cassandra_config_confirm: false to apply without asking."),
 ])
 def test_confirmation_refusal_says_where(initialized, expected):
     # no reset hint there: a node whose change was only declined

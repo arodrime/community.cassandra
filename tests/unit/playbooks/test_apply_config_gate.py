@@ -44,6 +44,7 @@ NEVER = {
 # every task of the rest that may write: the item of the plan's list that covers it, or why it never writes in
 # the compare
 WRITES = {
+    "Confirm config changes": "check mode",  # (the shared question, confirm_ask.yml: writes nothing)
     "Look for the AxonOps Java agent's options file": "read",
     "Record the ones not written since it started": "check mode",
     "Seed the alternative conf dir from the one in use": "conf directory",
@@ -172,6 +173,8 @@ def read_by_the_run():
 
 # facts of the rest only the exporter's own tasks set: the rest runs whenever the exporter is on
 EXPORTER_FACTS = {"_cassandra_config_exporter_jar_state", "cassandra_config_exporter_download"}
+# the question's own facts (confirm_ask.yml): never set by the compare, which asks nothing (check mode)
+QUESTION_FACTS = {"_cassandra_confirm_tries", "_cassandra_confirm_reply", "_cassandra_confirm_answer"}
 
 
 def test_every_fact_of_the_rest_the_run_reads_is_set_by_the_gate_or_checked():
@@ -180,7 +183,7 @@ def test_every_fact_of_the_rest_the_run_reads_is_set_by_the_gate_or_checked():
     gate_sets = set(gate["ansible.builtin.set_fact"])
     checked = set(COMPARE["vars"]["_gate_facts"])
     # set by the rest only: the gate sets them (as the rest leaves them: _sums' own values)
-    assert ((rest - plan) & read) - EXPORTER_FACTS <= gate_sets <= rest
+    assert ((rest - plan) & read) - EXPORTER_FACTS - QUESTION_FACTS <= gate_sets <= rest
     # set by both, or by the gate: apply_verify checks them
     assert ((rest & plan) & read) | gate_sets == checked
     assert set(COMPARE["vars"]["_gate_values"]) == gate_sets
