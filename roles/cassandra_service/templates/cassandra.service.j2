@@ -19,7 +19,7 @@ Group={{ cassandra_service_group }}
 Environment={{ (name ~ '=' ~ value) | to_json | replace('%', '%%') }}
 {% endfor %}
 ExecStart=/usr/sbin/cassandra -f
-{% if cassandra_service_drain_on_stop %}
+{% if cassandra_service_drain_on_stop | bool %}
 # Flush and stop accepting writes first; "-": a failed or timed out drain does not block the stop
 # JMX with authentication: user and password FILE only (this unit is world-readable)
 ExecStop=-/usr/bin/timeout -k 10 {{ cassandra_service_drain_timeout }} /usr/bin/nodetool -p {{ cassandra_jmx_port | default(7199) }}{{

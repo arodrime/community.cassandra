@@ -226,7 +226,7 @@ JVM_ON_OUT_OF_MEMORY_ERROR_OPT="-XX:OnOutOfMemoryError=kill -9 %p"
 # with authentication and/or ssl enabled. See https://wiki.apache.org/cassandra/JmxSecurity 
 #
 if [ "x$LOCAL_JMX" = "x" ]; then
-    LOCAL_JMX={{ 'yes' if cassandra_local_jmx else 'no' }}
+    LOCAL_JMX={{ 'yes' if cassandra_local_jmx | bool else 'no' }}
 fi
 
 # Specifies the default port over which Cassandra will be available for
@@ -247,8 +247,8 @@ else
   JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.authenticate=true"
 
   # jmx ssl options
-  {{ '' if cassandra_jmx_ssl_enabled else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl=true"
-  {{ '' if cassandra_jmx_ssl_need_client_auth else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.need.client.auth=true"
+  {{ '' if cassandra_jmx_ssl_enabled | bool else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl=true"
+  {{ '' if cassandra_jmx_ssl_need_client_auth | bool else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.need.client.auth=true"
   {{ '' if cassandra_jmx_ssl_protocols else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.protocols={{ cassandra_jmx_ssl_protocols or '<enabled-protocols>' }}"
   {{ '' if cassandra_jmx_ssl_cipher_suites else '#' }}JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl.enabled.cipher.suites={{ cassandra_jmx_ssl_cipher_suites or '<enabled-cipher-suites>' }}"
   {{ '' if cassandra_jmx_ssl_keystore else '#' }}JVM_OPTS="$JVM_OPTS -Djavax.net.ssl.keyStore={{ cassandra_jmx_ssl_keystore or '/path/to/keystore' }}"

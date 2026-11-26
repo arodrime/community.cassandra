@@ -46,7 +46,7 @@
 # bootstrap.
 - name: Wait for the bootstrap
   when:
-    - cassandra_service_wait_for_normal
+    - cassandra_service_wait_for_normal | bool
     - not ansible_check_mode
     - cassandra_new_node_state | default('new') != 'joined'  # in the ring already (an earlier run): nothing to follow
   module_defaults:

@@ -196,7 +196,7 @@
                or cassandra_new_node_paths.results | selectattr('item', 'in', _cassandra_new_node_units)
                   | selectattr('stat.exists') | list | length > 0,
                imported=cassandra_imported_host | default(false),
-               allow=cassandra_new_node_allow_kept_setup) }}
+               allow=cassandra_new_node_allow_kept_setup | bool) }}
       - >-
         {{ cassandra_new_node_reach | community.cassandra.cassandra_new_node_network(_cassandra_new_node_plan.own_ports,
              ss_output=cassandra_new_node_ss.stdout if cassandra_new_node_ss.rc | default(1) == 0 else none,

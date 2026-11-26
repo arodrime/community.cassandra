@@ -45,3 +45,13 @@ def test_refused_when_the_file_would_not_read_them_back(settings, wrong):
     assert passed is (wrong is None)
     if wrong:
         assert msg.startswith("cassandra_rackdc_extra_settings: %s: a key of letters" % wrong)
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_a_boolean_given_as_text_is_read_as_the_boolean(series):
+    # (audit rc3 r4 B2: cassandra_prefer_local "false" from an INI file turned prefer_local on)
+    env, ctx, dummy = load_role(series, FACTS)
+    ctx.update(cassandra_rackdc_dc="dc1", cassandra_rackdc_rack="r1", cassandra_prefer_local="false")
+    assert "# prefer_local=true" in render_template(env, series, "cassandra-rackdc.properties", ctx)[1]
+    ctx.update(cassandra_prefer_local="true")
+    assert "prefer_local=true" in render_template(env, series, "cassandra-rackdc.properties", ctx)[1]

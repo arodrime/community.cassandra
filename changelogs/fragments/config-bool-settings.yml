@@ -1,0 +1,18 @@
+breaking_changes:
+  - >-
+    cassandra_config, cassandra_service and cassandra_operation - a boolean setting given as text (``"false"``,
+    ``"no"``, ``"off"``: an INI hosts file, ``-e x=false``) is read as that boolean now, not as a non-empty text (on).
+    An inventory holding such a text for one of the settings below gets its files rewritten at the next
+    ``apply_config`` (``cassandra_local_jmx``: ``LOCAL_JMX`` changes in cassandra-env.sh; ``cassandra_log_console``:
+    the console appender in logback.xml...); ``apply_config --check`` shows the change and whether the nodes restart.
+bugfixes:
+  - >-
+    cassandra_config, cassandra_service and cassandra_operation - a boolean setting given as text (``"false"`` from
+    an INI hosts file, ``-e x=false``) turned its feature on, read as a non-empty text: ``cassandra_log_console``,
+    ``cassandra_debug_log_enabled``, ``cassandra_log_audit_file``, ``cassandra_log_cql_table`` (logback.xml),
+    ``cassandra_local_jmx``, ``cassandra_jmx_ssl_enabled``, ``cassandra_jmx_ssl_need_client_auth``
+    (cassandra-env.sh), ``cassandra_prefer_local`` (cassandra-rackdc.properties), ``cassandra_service_drain_on_stop``
+    (the cassandra unit), and the ``cassandra_config_reload_seeds``, ``cassandra_service_wait_for_normal``,
+    ``cassandra_service_restart_on_change``, ``cassandra_service_drain_on_stop``, ``cassandra_service_allow_new_seed``
+    and ``cassandra_new_node_allow_kept_setup`` conditions. They are read with Ansible's ``bool`` now, as the others;
+    a test reads every role and playbook for a boolean setting read without it.

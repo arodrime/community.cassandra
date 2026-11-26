@@ -106,7 +106,7 @@
     password_file: "{{ cassandra_jmx_password_file | default(omit, true) }}"
     password: "{{ omit if cassandra_jmx_password_file | default('') else cassandra_jmx_password | default(omit, true) }}"
   when:
-    - cassandra_config_reload_seeds
+    - cassandra_config_reload_seeds | bool
     - cassandra_config_applied.changed
     - (ansible_facts.services['cassandra.service'] | default(ansible_facts.services['cassandra'] | default({}))).state
       | default('') == 'running'

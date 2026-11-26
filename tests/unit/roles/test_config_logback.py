@@ -414,3 +414,15 @@ def test_the_task_passes_every_value_the_filter_writes():
     from ansible_collections.community.cassandra.plugins.filter.cassandra_config_refusals import WRITTEN
     given = re.findall(r"\b(cassandra_log_\w+)=\1\b", REFUSE["vars"]["_wrong"])
     assert given == [name for name, dummy, dummy2 in WRITTEN] + ["cassandra_log_cql_table_level"]
+
+
+@pytest.mark.parametrize("series", sorted(VERSIONS))
+def test_a_boolean_given_as_text_is_read_as_the_boolean(series):
+    # (audit rc3 r4 B2: "false" from an INI hosts file is a non-empty text: the console, the debug log, the audit
+    # file were on with it; the role reads every boolean setting with | bool)
+    text = logback(series, cassandra_log_console="false", cassandra_debug_log_enabled="false",
+                   cassandra_log_audit_file="false")
+    assert "<!-- <appender-ref ref=\"STDOUT\" /> -->" in text
+    assert "<!-- <appender-ref ref=\"ASYNCDEBUGLOG\" /> -->" in text
+    assert "<!-- <appender name=\"AUDIT\"" in text
+    assert logback(series, cassandra_log_console="true") == logback(series, cassandra_log_console=True)

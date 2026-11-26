@@ -119,3 +119,12 @@ def test_medusas_nodetool_ssl_follows_jmx_over_tls(enabled, written):
     defaults = role_vars("cassandra_medusa", "defaults")
     variables = {} if enabled is None else {"cassandra_jmx_ssl_enabled": enabled}
     assert render(defaults["cassandra_medusa_nodetool_ssl"], **variables) == written
+
+
+@pytest.mark.parametrize("series", ["40x", "41x", "50x"])
+def test_a_boolean_given_as_text_is_read_as_the_boolean(series):
+    # (audit rc3 r4 B2: "false" from an INI file is a non-empty text: JMX over TLS and LOCAL_JMX were read as on)
+    lines = env_lines(series, cassandra_jmx_ssl_enabled="false", cassandra_jmx_ssl_need_client_auth="false",
+                      cassandra_local_jmx="false")
+    assert "    LOCAL_JMX=no" in lines
+    assert any(line.lstrip().startswith('#JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.ssl=true"') for line in lines)

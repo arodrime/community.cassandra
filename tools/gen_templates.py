@@ -197,8 +197,8 @@ def zipped(var):
 
 
 # the stock audit appender (FileAuditLogger's audit.log) and its logger, commented out: on with cassandra_log_audit_file
-AUDIT_ON = "{{ '' if cassandra_log_audit_file else '<!-- ' }}"
-AUDIT_OFF = "{{ '' if cassandra_log_audit_file else ' -->' }}"
+AUDIT_ON = "{{ '' if cassandra_log_audit_file | bool else '<!-- ' }}"
+AUDIT_OFF = "{{ '' if cassandra_log_audit_file | bool else ' -->' }}"
 AUDIT_PATTERN = "<fileNamePattern>${cassandra.logdir}/audit/audit.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>"
 AUDIT_FILE = [
     in_block("AUDIT", '  <!-- <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">',
@@ -262,12 +262,12 @@ def pattern_rules(series):
 
 # 5.0: the system_views.system_logs table (the stock CQLLOG appender, commented out; its appender-ref: in
 # cassandra_config's _cassandra_config_logback_refs)
-CQL_ON = "{{ '' if cassandra_log_cql_table else '<!-- ' }}"
+CQL_ON = "{{ '' if cassandra_log_cql_table | bool else '<!-- ' }}"
 CQL_TABLE = [
     in_block("CQLLOG", '  <!-- <appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">',
              "  " + CQL_ON + '<appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">'),
     in_block("CQLLOG", "      <level>WARN</level>", "      <level>{{ cassandra_log_cql_table_level }}</level>"),
-    in_block("CQLLOG", "  </appender> -->", "  </appender>{{ '' if cassandra_log_cql_table else ' -->' }}"),
+    in_block("CQLLOG", "  </appender> -->", "  </appender>{{ '' if cassandra_log_cql_table | bool else ' -->' }}"),
 ]
 
 COMMON = {
@@ -279,7 +279,7 @@ COMMON = {
         ("dc=dc1", "dc={{ cassandra_rackdc_dc }}"),
         ("rack=rack1", "rack={{ cassandra_rackdc_rack }}"),
         # (your other settings after it: dc_suffix, ec2_naming_scheme..., cassandra_rackdc_extra_settings)
-        ("# prefer_local=true", "{{ '' if cassandra_prefer_local else '# ' }}prefer_local=true"
+        ("# prefer_local=true", "{{ '' if cassandra_prefer_local | bool else '# ' }}prefer_local=true"
          "{{ ('\\n' ~ (cassandra_rackdc_extra_settings.items() | map('join', '=') | join('\\n')))"
          " if cassandra_rackdc_extra_settings else '' }}"),
     ],
@@ -289,9 +289,9 @@ COMMON = {
         ('  <root level="INFO">', prepend_snippet("_cassandra_config_snippet_appenders")
          + '  <root level="{{ cassandra_log_level }}">'),
         ('    <appender-ref ref="ASYNCDEBUGLOG" /> <!-- Comment this line to disable debug.log -->',
-         "    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}"
+         "    {{ '' if cassandra_debug_log_enabled | bool else '<!-- ' }}"
          '<appender-ref ref="ASYNCDEBUGLOG" />'
-         "{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->"
+         "{{ '' if cassandra_debug_log_enabled | bool else ' -->' }} <!-- Comment this line to disable debug.log -->"
          # (your appender-refs: cassandra_logback_root_extra_refs, as lines in cassandra_config's vars)
          + append_list("_cassandra_config_logback_refs")),
         # the loggers of cassandra_log_levels (cassandra_config's vars), then your snippet
@@ -300,8 +300,8 @@ COMMON = {
          + append_list("_cassandra_config_log_levels") + append_snippet("_cassandra_config_snippet_logback")),
         # off by default: under systemd a second copy of system.log in the journal
         ('    <appender-ref ref="STDOUT" />',
-         "    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
-         "{{ '' if cassandra_log_console else ' -->' }}"),
+         "    {{ '' if cassandra_log_console | bool else '<!-- ' }}<appender-ref ref=\"STDOUT\" />"
+         "{{ '' if cassandra_log_console | bool else ' -->' }}"),
     ] + AUDIT_FILE + ROTATION,
 }
 
@@ -311,7 +311,8 @@ def jmx_ssl(var, option, example=None):
     the var's value in its place."""
     stock = '  #JVM_OPTS="$JVM_OPTS %s"' % (option if example is None else option + example)
     value = "" if example is None else "{{ %s or '%s' }}" % (var, example)
-    return (stock, "  {{ '' if %s else '#' }}JVM_OPTS=\"$JVM_OPTS %s%s\"" % (var, option, value))
+    switch = var + " | bool" if example is None else var  # (a switch alone: a boolean, read as Ansible's bool)
+    return (stock, "  {{ '' if %s else '#' }}JVM_OPTS=\"$JVM_OPTS %s%s\"" % (switch, option, value))
 
 
 JMX_SSL = [
@@ -332,7 +333,7 @@ ENV_COMMON = [
     opt("cassandra_jmx_rmi_hostname",
         '# JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"',
         'JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=@"', "<public name>", off="# "),
-    ("    LOCAL_JMX=yes", "    LOCAL_JMX={{ 'yes' if cassandra_local_jmx else 'no' }}"),
+    ("    LOCAL_JMX=yes", "    LOCAL_JMX={{ 'yes' if cassandra_local_jmx | bool else 'no' }}"),
     ('JMX_PORT="7199"', 'JMX_PORT="{{ cassandra_jmx_port }}"'),
     # the files cassandra_jmx_users writes: the access file on with them
     ('JVM_OPTS="$JVM_OPTS -Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password"',

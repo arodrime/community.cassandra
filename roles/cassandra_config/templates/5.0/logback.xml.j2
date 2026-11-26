@@ -86,25 +86,25 @@ appender reference in the root level section below.
   <!-- Uncomment below configuration (Audit Logging (FileAuditLogger) rolling file appender and Audit Logging
   additivity) in order to have the log events flow through separate log file instead of system.log.
   Audit Logging (FileAuditLogger) rolling file appender to audit.log -->
-  {{ '' if cassandra_log_audit_file else '<!-- ' }}<appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+  {{ '' if cassandra_log_audit_file | bool else '<!-- ' }}<appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>{{ cassandra_log_audit_dir }}/audit.log</file>
-    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">{{ '' if cassandra_log_audit_file else ' -->' }}
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">{{ '' if cassandra_log_audit_file | bool else ' -->' }}
       <!-- rollover daily -->
-      {{ '' if cassandra_log_audit_file else '<!-- ' }}<fileNamePattern>{{ cassandra_log_audit_dir }}/audit.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_audit_compress | bool else '' }}</fileNamePattern>{{ '' if cassandra_log_audit_file else ' -->' }}
+      {{ '' if cassandra_log_audit_file | bool else '<!-- ' }}<fileNamePattern>{{ cassandra_log_audit_dir }}/audit.log.%d{yyyy-MM-dd}.%i{{ '.zip' if cassandra_log_audit_compress | bool else '' }}</fileNamePattern>{{ '' if cassandra_log_audit_file | bool else ' -->' }}
       <!-- each file should be at most 50MB, keep 30 days worth of history, but at most 5GB -->
-      {{ '' if cassandra_log_audit_file else '<!-- ' }}<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>
+      {{ '' if cassandra_log_audit_file | bool else '<!-- ' }}<maxFileSize>{{ cassandra_log_audit_max_file_size }}</maxFileSize>
       <maxHistory>{{ cassandra_log_audit_max_history }}</maxHistory>
       <totalSizeCap>{{ cassandra_log_audit_total_size_cap }}</totalSizeCap>
     </rollingPolicy>
     <encoder>
       <pattern>{{ cassandra_log_pattern }}</pattern>
     </encoder>
-  </appender>{{ '' if cassandra_log_audit_file else ' -->' }}
+  </appender>{{ '' if cassandra_log_audit_file | bool else ' -->' }}
 
   <!-- Audit Logging additivity to redirect audit logging events to audit/audit.log -->
-  {{ '' if cassandra_log_audit_file else '<!-- ' }}<logger name="org.apache.cassandra.audit" additivity="false" level="INFO">
+  {{ '' if cassandra_log_audit_file | bool else '<!-- ' }}<logger name="org.apache.cassandra.audit" additivity="false" level="INFO">
     <appender-ref ref="AUDIT"/>
-  </logger>{{ '' if cassandra_log_audit_file else ' -->' }}
+  </logger>{{ '' if cassandra_log_audit_file | bool else ' -->' }}
 
   <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
@@ -112,16 +112,16 @@ appender reference in the root level section below.
 
   <!-- Uncomment below configuration and corresponding appender-ref to activate
   logging into system_views.system_logs virtual table. -->
-  {{ '' if cassandra_log_cql_table else '<!-- ' }}<appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">
+  {{ '' if cassandra_log_cql_table | bool else '<!-- ' }}<appender name="CQLLOG" class="org.apache.cassandra.utils.logging.VirtualTableAppender">
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
       <level>{{ cassandra_log_cql_table_level }}</level>
     </filter>
-  </appender>{{ '' if cassandra_log_cql_table else ' -->' }}
+  </appender>{{ '' if cassandra_log_cql_table | bool else ' -->' }}
 
 {{ (_cassandra_config_snippet_appenders ~ '\n') if _cassandra_config_snippet_appenders else '' }}  <root level="{{ cassandra_log_level }}">
     <appender-ref ref="SYSTEMLOG" />
-    {{ '' if cassandra_log_console else '<!-- ' }}<appender-ref ref="STDOUT" />{{ '' if cassandra_log_console else ' -->' }}
-    {{ '' if cassandra_debug_log_enabled else '<!-- ' }}<appender-ref ref="ASYNCDEBUGLOG" />{{ '' if cassandra_debug_log_enabled else ' -->' }} <!-- Comment this line to disable debug.log -->{{ ('\n' ~ (_cassandra_config_logback_refs | join('\n'))) if _cassandra_config_logback_refs else '' }}
+    {{ '' if cassandra_log_console | bool else '<!-- ' }}<appender-ref ref="STDOUT" />{{ '' if cassandra_log_console | bool else ' -->' }}
+    {{ '' if cassandra_debug_log_enabled | bool else '<!-- ' }}<appender-ref ref="ASYNCDEBUGLOG" />{{ '' if cassandra_debug_log_enabled | bool else ' -->' }} <!-- Comment this line to disable debug.log -->{{ ('\n' ~ (_cassandra_config_logback_refs | join('\n'))) if _cassandra_config_logback_refs else '' }}
     <!--
     <appender-ref ref="LogbackMetrics" />
     -->

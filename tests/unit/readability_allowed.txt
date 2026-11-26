@@ -338,7 +338,7 @@
 364	roles/cassandra_operation/tasks/new_node_read.yml :: Look for the Pythons, Java, Medusa and a Cassandra unit already there :: loop (jinja)
 445	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._all.2 (jinja)
 439	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._all.3 (jinja)
-675	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._all.5 (jinja)
+682	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._all.5 (jinja)
 377	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._all.6 (jinja)
 430	roles/cassandra_operation/tasks/new_node_read.yml :: Put the findings together :: vars._dirs_result (jinja)
 479	roles/cassandra_operation/tasks/new_node_state.yml :: Where {{ inventory_hostname }} stands / Need the ring of the cluster :: ansible.builtin.assert.fail_msg (jinja)

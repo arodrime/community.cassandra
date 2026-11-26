@@ -334,7 +334,7 @@ def _read_newline_list(m, e, cap, seen):
 _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (r"(\w+)", _read_var),
     (r"(\w+) \| lower|\((\w+) \| bool\) \| lower", _read_lower),
-    (r"'' if %s else '[^']*'" % V, _read_switch),
+    (r"'' if %s(?: \| bool)? else '[^']*'" % V, _read_switch),
     (r"'# ' if (\w+)(?: == ''| \| string in \['', 'None'\]) else ''", _read_comment_switch),
     (r"'#' if (\w+) \| string in \['', 'None'\] else ''", _read_hash_switch),
     (r"(\w+) if \1 \| string not in \['', 'None'\] else '[^']*'", _read_set_value),
@@ -343,7 +343,7 @@ _LINE_EXPRESSIONS = tuple((re.compile(pattern), reader) for pattern, reader in (
     (QUOTED, _read_quoted),
     (r"%s or '[^']*'" % V, _read_or_default),
     (r"'true' if (\w+) == '' else \(\w+ \| string \| lower\)", _read_true_unset),
-    (r"'yes' if (\w+) else 'no'", _read_yes_no),
+    (r"'yes' if (\w+)(?: \| bool)? else 'no'", _read_yes_no),
     (r"(\w+) if \w+ is string else .*", _read_string),
     (r"\(' ' \+ (\w+)\) if \w+ else ''", _read_spaced_word),
     (r"'[^']*' ~ %s if %s == '(\w+)'%s else '([^']*)'" % (V, V, WHEN_SET), _read_prefixed_choice),

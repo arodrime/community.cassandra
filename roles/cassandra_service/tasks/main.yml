@@ -60,7 +60,7 @@
       cassandra_service_drain_timeout ({{ cassandra_service_drain_timeout }}) + 10 must be below
       cassandra_service_timeout_stop ({{ cassandra_service_timeout_stop }}), or systemd kills the JVM mid-drain.
     quiet: true
-  when: cassandra_service_drain_on_stop
+  when: cassandra_service_drain_on_stop | bool
 
 # Written already (account checked too) when a restart wrote it before draining (action_restart.yml)
 - name: Install the cassandra systemd unit
@@ -166,7 +166,7 @@
       when:
         - _cassandra_service_is_seed | bool
         - not cassandra_service_was_initialized | bool
-        - not cassandra_service_allow_new_seed
+        - not cassandra_service_allow_new_seed | bool
 
     # Seeds this same run started for the first time (a cluster being created,
     # e.g. with serial: 1) don't count as an existing cluster
@@ -234,14 +234,14 @@
         name: cassandra
         state: >-
           {{ 'restarted' if cassandra_service_state == 'restarted'
-                            or (cassandra_service_restart_on_change and _cassandra_service_unit_changed | default(false) | bool)
+                            or (cassandra_service_restart_on_change | bool and _cassandra_service_unit_changed | default(false) | bool)
              else 'started' }}
       register: cassandra_service_started
 
     # Stops early, with the end of the journal, when Cassandra stops (wait_normal.yml)
     - name: Wait for the node to be joined (Mode NORMAL)
       when:
-        - cassandra_service_wait_for_normal
+        - cassandra_service_wait_for_normal | bool
         - not ansible_check_mode
       block:
         - name: Note until when to wait
