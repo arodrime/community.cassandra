@@ -158,21 +158,24 @@ def cassandra_ping_command(names, inventory=None, default_inventory=None, cwd=No
                     + [shlex.quote(",".join(names)), "-m ping -vvv"])
 
 
-def cassandra_not_reached(hosts, inventory=None, default_inventory=None, cwd=None):
+def cassandra_not_reached(hosts, inventory=None, default_inventory=None, cwd=None, inventory_alone=""):
     """The hosts Ansible did not reach at the start of a run (preflight) -> the lines of its refusal: only what was
     observed (Ansible did not reach them: its error is the UNREACHABLE line above, the ops callback's), the command
-    that shows all of the error, the option to go on without them. No guessed cause (the server down...): the
-    server and Cassandra may well run (a remote tmp dir, a key, sudo)."""
+    that shows all of the error, the option to go on without them; inventory_alone: the run's option that contacts
+    no node (drift: "-e drift_nodes=false"), said last. No guessed cause (the server down...): the server and
+    Cassandra may well run (a remote tmp dir, a key, sudo)."""
     hosts = [str(h) for h in hosts or []]
     ping = cassandra_ping_command(hosts, inventory, default_inventory, cwd)
     head = "%s not reached by Ansible" % (hosts[0] if len(hosts) == 1 else out.plural(len(hosts), "node"))
     labels = ["all of the error:", "to go on without %s:" % ("it" if len(hosts) == 1 else "them")]
+    labels += ["or the inventory alone:"] if inventory_alone else []
     column = max(len(label) for label in labels) + 2
     return cassandra_refused(head, (hosts if len(hosts) > 1 else []) + [
         "Ansible's error: the UNREACHABLE line%s above" % ("" if len(hosts) == 1 else "s"),
         labels[0].ljust(column) + ping,
         labels[1].ljust(column) + "-e cassandra_allow_down_nodes=true",
-        " " * column + "(the cluster health checks then need -e cassandra_service_health_force=true)"])
+        " " * column + "(the cluster health checks then need -e cassandra_service_health_force=true)"]
+        + ([labels[2].ljust(column) + inventory_alone + " (no node contacted)"] if inventory_alone else []))
 
 
 # the width of a refusal: 79 columns (an 80-column terminal), whatever prints it (a terminal, a pipe, a log file)

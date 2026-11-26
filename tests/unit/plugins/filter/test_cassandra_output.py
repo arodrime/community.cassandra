@@ -96,6 +96,12 @@ def test_not_reached_says_only_what_was_observed():
     assert "  all of the error:       ansible n3,n4 -m ping -vvv" in two
     text = " ".join(lines + two).lower()
     assert "restart" not in text and "replace" not in text and "server" not in text
+    # (2026-11-26) drift: its inventory alone also goes on, no node contacted
+    drift = cassandra_not_reached(["n3"], inventory=["/etc/ansible/hosts"], default_inventory="/etc/ansible/hosts",
+                                  inventory_alone="-e drift_nodes=false")
+    assert drift[-1] == "  or the inventory alone:  -e drift_nodes=false (no node contacted)", drift
+    assert drift[3] == "  to go on without it:     -e cassandra_allow_down_nodes=true" and len(drift) == 7
+    assert all(len(line) <= 79 for line in drift)
 
 
 def test_preflight_stops_on_a_node_not_reached_with_that_text():
@@ -106,6 +112,7 @@ def test_preflight_stops_on_a_node_not_reached_with_that_text():
         tasks = [t for play in yaml.safe_load(f) for t in play.get("tasks", [])]
     answers = next(t for t in tasks if t["name"] == "Every node answers")["ansible.builtin.assert"]["fail_msg"]
     assert "cassandra_not_reached(" in answers and "Restart" not in answers and "replace" not in answers
+    assert "inventory_alone='-e drift_nodes=false' if _cassandra_apply_config_compare_only" in answers
 
 
 def test_preflight_mixed_versions_as_rows_with_exact_ways_out():
