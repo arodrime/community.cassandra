@@ -343,7 +343,7 @@
           {%-   set close = hostvars[hosts | first]._cassandra_preflight_unknown[v] -%}
           {%-   set _ = out.append(v | community.cassandra.cassandra_unknown_note(
                                      close, hosts | community.cassandra.cassandra_node_list(all_nodes=_run),
-                                     close_set=close | length > 0 and close in hostvars[hosts | first])) -%}
+                                     hosts=hosts, hostvars=hostvars)) -%}
           {%- endfor -%}
           {{ out | join(_nl ~ _nl) }}
       when: ansible_play_hosts | map('extract', hostvars, '_cassandra_preflight_unknown') | map('list') | flatten | length > 0

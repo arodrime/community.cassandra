@@ -114,7 +114,7 @@
 482	playbooks/preflight.yml :: Cassandra preflight checks / Racks per datacenter :: vars._refused (jinja)
 379	playbooks/preflight.yml :: Cassandra preflight checks / Seed layout :: vars._note (jinja)
 404	playbooks/preflight.yml :: Cassandra preflight checks / Warn about the JVM options :: vars._note (jinja)
-614	playbooks/preflight.yml :: Cassandra preflight checks / Warn about them :: vars._note (jinja)
+579	playbooks/preflight.yml :: Cassandra preflight checks / Warn about them :: vars._note (jinja)
 421	playbooks/preflight.yml :: Cassandra preflight checks :: hosts (jinja)
 303	playbooks/remove_dead_node.yml :: Remove the dead node / Confirm the assassinate / The address given is the dead node's :: ansible.builtin.assert.fail_msg (jinja)
 567	playbooks/remove_dead_node.yml :: Remove the dead node / Its removal is not coordinated elsewhere :: ansible.builtin.assert.fail_msg (jinja)

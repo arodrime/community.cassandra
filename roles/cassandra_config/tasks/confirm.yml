@@ -98,7 +98,8 @@
         'diff': r.stdout}) %}{% endfor %}{{ out }}
 
 # One question per batch (with serial, once per batch), the collection's shared one (it names the cluster): its
-# answer set on every host of the batch (run_once); no, or no answer, stops there
+# answer set on every host of the batch (run_once). No, 3 unclear answers or no terminal stop the whole play there
+# (run_once), its later batches and blank nodes too; why each node is asked said in the question (not blank: ...)
 - name: Start the count of answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: 0
@@ -114,20 +115,21 @@
   when: *config_asks
   vars:
     _cassandra_confirm_skip: cassandra_config_confirm
+    _cassandra_confirm_unchanged: config not written  # (the roles before it in the play may have changed things)
     cassandra_confirm_prompt: |-
       cassandra_config is about to change (diffs above):
-      {% for h in ansible_play_batch if hostvars[h]._cassandra_config_ask | default(false) | bool %}
-        {{ h }}: {{ hostvars[h]._cassandra_config_changes | join(', ') }}
+      {% for h in _asked %}
+        {{ h.inventory_hostname }}: {{ h._cassandra_config_changes | join(', ') }}{{ _why[h.inventory_hostname] }}
       {% endfor %}
       Nodes are NOT restarted by this role.
-
-- name: Stop unless the changes were confirmed
-  ansible.builtin.assert:
-    that: _cassandra_confirm_answer | default('') == 'go'
-    fail_msg: >-
-      Config changes not confirmed on {{ inventory_hostname }}{{ (' (not blank: ' ~ _cassandra_config_initialized_why ~ ')')
-      if _cassandra_config_initialized | bool else '' }}. Run interactively and answer yes,
-      or set cassandra_config_confirm: false to apply without asking.
-  when:
-    - not ansible_check_mode
-    - _cassandra_config_ask | bool
+    _asked: >-
+      {{ ansible_play_batch | map('extract', hostvars) | selectattr('_cassandra_config_ask', 'defined')
+         | selectattr('_cassandra_config_ask') | list }}
+    # (why each node is asked: not blank, and what was found)
+    _why: >-
+      {%- set out = {} -%}
+      {%- for h in _asked -%}
+      {%-   set _ = out.update({h.inventory_hostname: (' (not blank: ' ~ h._cassandra_config_initialized_why ~ ')')
+                                if h._cassandra_config_initialized | default(false) | bool else ''}) -%}
+      {%- endfor -%}
+      {{ out }}

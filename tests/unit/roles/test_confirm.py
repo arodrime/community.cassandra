@@ -152,7 +152,8 @@ def test_no_terminal_fails_at_once(tmp_path):
     argv, env = command(tmp_path)
     run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
     assert run.returncode != 0
-    assert "No terminal to answer the confirmation on" in run.stdout
+    assert "No terminal to answer the confirmation on, nothing changed. The question:" in run.stdout
+    assert "Remove node7 from the ring?" in run.stdout  # (what it would have asked)
     assert "-e cassandra_operation_confirm=false" in run.stdout
     assert "Please answer yes or no" not in run.stdout
     assert went_on(run.stdout) == 0
@@ -179,9 +180,13 @@ def test_the_question_names_the_cluster(tmp_path):
     assert prompt() == "Remove node7? Answer yes or no"  # no name known: none said
     assert prompt(_cassandra_confirm_tries=2, cassandra_cluster_name="test_cluster") == "Please answer yes or no"
     # the variable that skips it, the caller's (cassandra_config: cassandra_config_confirm)
-    argv, env = command(tmp_path, "-e", "_cassandra_confirm_skip=cassandra_config_confirm")
+    # and what its stops say was left as it was (cassandra_config: other roles of the play may have run before)
+    argv, env = command(tmp_path, "-e", "_cassandra_confirm_skip=cassandra_config_confirm",
+                        "-e", "_cassandra_confirm_unchanged='config not written'")
     run = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=False)
     assert "-e cassandra_config_confirm=false" in run.stdout and "Cluster:" not in run.stdout, run.stdout
+    assert "No terminal to answer the confirmation on, config not written." in run.stdout, run.stdout
+    assert "nothing changed" not in run.stdout, run.stdout
 
 
 def test_no_terminal_and_confirm_false_goes_on(tmp_path):

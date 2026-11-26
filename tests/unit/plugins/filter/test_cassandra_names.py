@@ -253,6 +253,17 @@ def test_a_comment_pasted_into_a_key_names_the_variable_its_last_word_makes():
     name = "cassandra_# Logging (logback.xml)log_console"
     assert cassandra_unknown_names([name, "cassandra_# a note)frobnicate"], []) == {
         name: "cassandra_log_console", "cassandra_# a note)frobnicate": ""}
+    # the pasted text names the whole variable; another character is no pasted comment: no name from its last word
+    assert cassandra_unknown_names(["cassandra_# old cassandra_seeds"], []) == {"cassandra_# old cassandra_seeds": "cassandra_seeds"}
+    # (cassandra_x-version: the close name by spelling, not its last word, said as the closest, not as certain)
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_names import _pasted
+    assert _pasted("cassandra_x-version", ["cassandra_version"]) == []
+    x = cassandra_unknown_names(["cassandra_x-version"], [])["cassandra_x-version"]
+    assert "         closest known variable: %s" % x in cassandra_unknown_note("cassandra_x-version", x, "n1").split("\n")
+    assert "probably" in cassandra_unknown_note("cassandra_x-version", x, "n1")
+    # set for some of the nodes only: its default applies on the others
+    assert cassandra_unknown_note(name, "cassandra_log_console", "n1, n2", close_set="n2").split("\n")[-1] == (
+        "         cassandra_log_console not set on n2: its default applies there meanwhile")
     note = cassandra_unknown_note(name, "cassandra_log_console", "all 3 nodes").split("\n")
     assert note == ["WARNING  probably a typo in a variable name, not known to this collection:",
                     "         cassandra_# Logging (logback.xml)log_console",

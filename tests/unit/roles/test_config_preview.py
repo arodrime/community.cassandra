@@ -408,16 +408,25 @@ def test_identity_refusal_asks_first_whether_the_inventory_is_loaded():
         assert "group_vars" not in msg
 
 
-@pytest.mark.parametrize("initialized, expected", [
-    (True, "Config changes not confirmed on node1 (not blank: Cassandra is running). Run interactively"
-           " and answer yes, or set cassandra_config_confirm: false to apply without asking."),
-    (False, "Config changes not confirmed on node1. Run interactively"
-            " and answer yes, or set cassandra_config_confirm: false to apply without asking."),
-])
-def test_confirmation_refusal_says_where(initialized, expected):
-    # no reset hint there: a node whose change was only declined
-    assert refusal("Stop unless the changes were confirmed", inventory_hostname="node1", _cassandra_config_initialized=initialized,
-                   _cassandra_config_initialized_why="Cassandra is running", _cassandra_config_reset="RESET-HINT.") == expected
+def test_the_question_says_why_each_node_is_asked():
+    # (the assert that said it after a no is gone: the shared question stops the play first)
+    t = task("Confirm config changes")
+    hostvars = {"node1": {"_cassandra_config_ask": True, "_cassandra_config_changes": ["cassandra.yaml"],
+                          "_cassandra_config_initialized": True, "_cassandra_config_initialized_why": "Cassandra is running"},
+                "node2": {"_cassandra_config_ask": True, "_cassandra_config_changes": ["logback.xml"],
+                          "_cassandra_config_initialized": False},
+                "node3": {"_cassandra_config_ask": False}}
+    for name, host in hostvars.items():
+        host["inventory_hostname"] = name
+    variables = dict(ansible_play_batch=["node1", "node2", "node3"], hostvars=hostvars)
+    variables["_asked"] = render(t["vars"]["_asked"], **variables)
+    variables["_why"] = render(t["vars"]["_why"], **variables)
+    prompt = render(t["vars"]["cassandra_confirm_prompt"], **variables)
+    assert [line for line in prompt.split("\n") if line.strip()] == [
+        "cassandra_config is about to change (diffs above):", "  node1: cassandra.yaml (not blank: Cassandra is running)",
+        "  node2: logback.xml", "Nodes are NOT restarted by this role."]
+    assert t["vars"]["_cassandra_confirm_unchanged"] == "config not written"
+    assert t["vars"]["_cassandra_confirm_skip"] == "cassandra_config_confirm"
 
 
 @pytest.mark.parametrize("env", LOCALES)

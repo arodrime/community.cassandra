@@ -84,7 +84,6 @@ SAID = {
     "Say which files are kept as they are (cassandra_config_keep_files)": "no operator message",
     "Show the owner, group and mode changes": "quiet",
     "Confirm config changes": "check mode",
-    "Stop unless the changes were confirmed": "check mode",
     "Refuse to load an AxonOps Java agent not installed": "check mode",  # (its look is a command: skipped)
     "Say the change cannot be told pending": "check mode",
     "Say the files the header was not added to": "header",

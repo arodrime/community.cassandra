@@ -182,28 +182,40 @@ def cassandra_unknown_names(names, known, cutoff=0.8):
 
 
 def _pasted(low, documented):
-    """A name with text pasted into it (a comment: "cassandra_# Logging (logback.xml)log_console"): the documented
-    variable its last word makes ("cassandra_log_console"), as a list; [] when none."""
-    tail = re.search(r"\W(\w+)$", low)
-    name = "cassandra_" + tail.group(1).lstrip("_") if tail else ""
-    return [name] if name in documented else []
+    """A name with a comment pasted into it (a space or a "#": "cassandra_# Logging (logback.xml)log_console"): the
+    documented variable its last word makes ("cassandra_log_console"; "cassandra_# old cassandra_seeds":
+    "cassandra_seeds"), as a list; [] when none, or for another character ("cassandra_x-version")."""
+    tail = re.search(r"\W(\w+)$", low) if re.search(r"[\s#]", low) else None
+    word = tail.group(1).lstrip("_") if tail else ""
+    name = word if word.startswith("cassandra_") else "cassandra_" + word
+    return [name] if word and name in documented else []
 
 
-def cassandra_unknown_note(name, close="", where="", close_set=False):
+def cassandra_unknown_note(name, close="", where="", close_set=False, hosts=None, hostvars=None):
     """The warning of a variable no role or playbook knows (cassandra_unknown_names): a block of its own, one fact
     per line, its lines under its first; close: the documented variable it is close to; where: the nodes it is set
-    for; close_set: close is set too (else it keeps its default).
+    for; close_set: close is set too for all of them, else False (none: it keeps its default), or the nodes it is not
+    set for (some only: its default applies there); hosts, hostvars: the nodes it is set for and their variables,
+    close_set read from them.
     Example: "cassandra_log_consol", "cassandra_log_console", "all 3 nodes" -> "WARNING  probably a typo in a
     variable name, not known to this collection:", "         cassandra_log_consol", "         set for: all 3 nodes",
     "         no role or playbook reads it", "         closest known variable: cassandra_log_console",
     "         cassandra_log_console not set: its default applies meanwhile" (joined)."""
+    if close and hosts is not None and hostvars is not None:  # (close_set from the nodes it is set for)
+        unset = [h for h in hosts if close not in hostvars[h]]
+        close_set = not unset if len(unset) in (0, len(hosts)) else ", ".join(unset)
     under = " " * 9
     lines = ["WARNING  probably a typo in a variable name, not known to this collection:", under + name]
     lines += [under + "set for: " + where] if where else []
     lines.append(under + "no role or playbook reads it")
     if close:
         lines.append(under + "closest known variable: " + close)
-        lines.append(under + close + (" is set too" if close_set else " not set: its default applies meanwhile"))
+        if close_set is True:
+            lines.append(under + close + " is set too")
+        elif close_set:
+            lines.append(under + close + " not set on " + close_set + ": its default applies there meanwhile")
+        else:
+            lines.append(under + close + " not set: its default applies meanwhile")
     return "\n".join(lines)
 
 

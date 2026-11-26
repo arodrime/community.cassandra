@@ -165,7 +165,7 @@
       rescue:
         - name: Assert the failure came from the confirmation
           ansible.builtin.assert:
-            that: ansible_failed_task.name == "Stop unless the changes were confirmed"
+            that: ansible_failed_task.name == "Stop, no terminal to answer on"
 
     # The inventory does not point at its data yet: the live cassandra.yaml does
     - name: Change the data dir of the initialized node, no terminal to confirm
@@ -185,7 +185,7 @@
         - name: Assert the failure came from the confirmation and says where the node was found initialized
           ansible.builtin.assert:
             that:
-              - ansible_failed_task.name == "Stop unless the changes were confirmed"
+              - ansible_failed_task.name == "Stop, no terminal to answer on"
               - "'(not blank: /tmp/initialized-node/system)' in ansible_failed_result.msg"
 
     # No PyYAML needed on the node, and a data dir not created yet does not

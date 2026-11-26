@@ -295,11 +295,10 @@ PLAYBOOK = """
 
 def confirm_tasks():
     """The role's question, as it is in tasks/confirm.yml: the collection's shared one (confirm_ask.yml)."""
-    start, ask, check = (task("Start the count of answers"), task("Confirm config changes"),
-                         task("Stop unless the changes were confirmed"))
+    start, ask = task("Start the count of answers"), task("Confirm config changes")
     assert ask["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_operation",
                                                    "tasks_from": "confirm_ask.yml"}
-    return [start, ask, check]
+    return [start, ask]
 
 
 def run_in_terminal(tmp_path, answer):
@@ -337,7 +336,9 @@ def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
     assert rc == 0, output
     assert output.count("Answer yes or no") == 1  # one question for the batch
     assert "Cluster: test_cluster" in output  # (the shared question names the cluster)
-    assert re.search(r"node1: cassandra.yaml\r?\n\s*node2: cassandra.yaml", output), output
+    # why each node is asked, in the question (the assert that said it is gone: a no stops the play first)
+    assert re.search(r"node1: cassandra.yaml \(not blank: /var/lib/cassandra/data/system\)\r?\n"
+                     r"\s*node2: cassandra.yaml \(not blank: /var/lib/cassandra/data/system\)", output), output
     assert len(re.findall(r'"msg": "went on"', output)) == 2, output
     assert "not confirmed" not in output
 
@@ -346,7 +347,7 @@ def test_the_answer_holds_for_every_node_of_the_batch(tmp_path):
 def test_no_stops_every_node_of_the_batch(tmp_path):
     rc, output = run_in_terminal(tmp_path, "no")
     assert rc != 0
-    assert "Stopped at your request, nothing changed." in output, output
+    assert "Stopped at your request, config not written." in output, output  # (other roles may have run before)
     assert "went on" not in output
 
 

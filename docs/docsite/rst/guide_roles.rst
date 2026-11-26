@@ -1015,8 +1015,10 @@ Before writing anything, :ansplugin:`community.cassandra.cassandra_config#role` 
 directory on the node and shows a diff against the live files. Passwords are shown as ``****``.
 
 On a node that is not blank (a system keyspace in its data directories, or Cassandra running: see where a node
-stands in the operator output guide), it then asks for confirmation (``yes`` or ``y``; the cluster named above the question, as every confirmation of the
-collection), once for all the hosts of the batch. Without a terminal to answer, the run fails instead of applying. ``cassandra_config_confirm: false`` applies
+stands in the operator output guide), it then asks for confirmation (``yes`` or ``y``; the cluster named above the
+question, as every confirmation of the collection; why each node is asked after its files), once for all the hosts of
+the batch. ``no``, three answers that are neither, or no terminal to answer stop the whole play there, its later
+``serial`` batches and its blank nodes too (``config not written``). ``cassandra_config_confirm: false`` applies
 without asking, ``true`` always asks. It refuses outright to change the settings a node keeps for life (see
 `Inventory`_) unless ``cassandra_config_force_identity_change: true``.
 

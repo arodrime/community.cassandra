@@ -5,7 +5,10 @@
 # It includes itself again after an answer that is neither yes nor no (pause
 # has no until on every ansible-core version). _cassandra_confirm_skip: the
 # variable that skips the question, said without a terminal (default
-# cassandra_operation_confirm).
+# cassandra_operation_confirm); _cassandra_confirm_unchanged: what its stops
+# say was left as it was (default "nothing changed"; cassandra_config, after
+# other roles of the same play: "config not written"). A stop stops the play
+# (run_once), every node of it.
 - name: Count the answers
   ansible.builtin.set_fact:
     _cassandra_confirm_tries: "{{ _cassandra_confirm_tries | int + 1 }}"
@@ -31,9 +34,10 @@
 
 - name: Stop, no terminal to answer on
   ansible.builtin.fail:
-    msg: >-
-      No terminal to answer the confirmation on, nothing changed. Run it from a terminal,
-      or add -e {{ _cassandra_confirm_skip | default('cassandra_operation_confirm') }}=false to go on without asking.
+    msg: |-
+      No terminal to answer the confirmation on, {{ _cassandra_confirm_unchanged | default('nothing changed') }}. The question:
+      {{ cassandra_confirm_prompt }}
+      Run it from a terminal, or add -e {{ _cassandra_confirm_skip | default('cassandra_operation_confirm') }}=false to go on without asking.
   run_once: true
   when: _cassandra_confirm_answer == 'no_terminal'
   vars:
@@ -42,7 +46,7 @@
 # Only go and again carry on, whatever else the answer turned into
 - name: Stop at the operator's request
   ansible.builtin.fail:
-    msg: Stopped at your request, nothing changed.
+    msg: "Stopped at your request, {{ _cassandra_confirm_unchanged | default('nothing changed') }}."
   run_once: true
   when: _cassandra_confirm_answer not in ['go', 'again']
   vars:
@@ -50,7 +54,7 @@
 
 - name: Stop after 3 answers that are neither yes nor no
   ansible.builtin.fail:
-    msg: No yes or no after 3 answers, stopped, nothing changed.
+    msg: "No yes or no after 3 answers, stopped, {{ _cassandra_confirm_unchanged | default('nothing changed') }}."
   run_once: true
   when:
     - _cassandra_confirm_answer == 'again'

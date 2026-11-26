@@ -35,11 +35,14 @@ initialized (a `system` keyspace in `cassandra_data_file_directories`, its
 `local_system_data_file_directory`, `/var/lib/cassandra/data` or a tarball's
 `data/data`, or any absolute path written in its live `cassandra.yaml`
 outside comment lines, relative ones excepted; a live file it cannot read;
-or Cassandra running) is only changed after you answer `yes` (or `y`) at a single
-prompt naming the cluster and listing every host and file concerned; a first install is not
-blocked. `true` asks whenever a file changes, `false` never does. The JMX
-users files are written without that preview. With no terminal to answer
-(CI, AWX), a required confirmation fails the run.
+or Cassandra running) is only changed after you answer `yes` (or `y`)
+at a single prompt naming the cluster and listing every host and file
+concerned, with why each node is asked (`not blank: ...`); a first
+install is not blocked. `no`, three answers that are neither, or no
+terminal to answer (CI, AWX) stop the whole play there, its later
+`serial` batches and its blank nodes too (`config not written`). `true`
+asks whenever a file changes, `false` never does. The JMX users files
+are written without that preview.
 A refusal says where the node was found initialized and, for a node that
 was only started by mistake (e.g. with the stock config) and never held real
 data, which directories to empty to start it over (Cassandra stopped; this
