@@ -1,0 +1,3 @@
+---
+bugfixes:
+- "cassandra_hosts, cassandra_nodes lookups - ``CASSANDRA_CLUSTER`` set to a ``cassandra_cluster_name`` of the inventory's ``group_vars`` picks its group in a play's ``hosts:`` with ``--limit`` too (it was refused: no hostvars before the run's first play, which ``--limit`` skips); the hosts marked ``cassandra_node_state: absent`` are left out there too. The inventory's variables are read then."

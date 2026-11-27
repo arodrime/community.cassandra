@@ -77,8 +77,10 @@ import re
 
 from ansible import context
 from ansible.errors import AnsibleError, AnsibleLookupError
+from ansible.inventory.manager import InventoryManager
 from ansible.plugins.lookup import LookupBase
 from ansible.utils.vars import load_extra_vars
+from ansible.vars.manager import VariableManager
 from jinja2 import Undefined
 
 # a host's cassandra_cluster_name that the inventory alone does not give (a fact of the node)
@@ -303,6 +305,36 @@ def in_inventory(hostvars, host):
         return False
 
 
+# the inventory read again for InventoryHostvars, once per run: {sources: (inventory, variable manager, {host: vars})}
+_READ_AGAIN = {}
+
+
+class InventoryHostvars(object):
+    """The hosts' variables as the inventory gives them (its files, its group_vars and host_vars through the vars
+    plugins, the -e ones), where a play's hosts: has no hostvars yet: before the run's first play ran (a --limit
+    skips the operation playbooks' localhost one). The inventory is read again once in the run, when a host is
+    first asked; a host's variables once, when asked."""
+
+    def __init__(self, loader):
+        self._loader = loader
+
+    def _read(self):
+        sources = tuple(context.CLIARGS.get("inventory") or ())
+        if sources not in _READ_AGAIN:
+            inventory = InventoryManager(loader=self._loader, sources=list(sources))
+            _READ_AGAIN[sources] = (inventory, VariableManager(loader=self._loader, inventory=inventory), {})
+        return _READ_AGAIN[sources]
+
+    def __contains__(self, host):
+        return host is not None and self._read()[0].get_host(host) is not None
+
+    def __getitem__(self, host):
+        inventory, manager, read = self._read()
+        if host not in read:
+            read[host] = manager.get_vars(host=inventory.get_host(host), include_hostvars=False)
+        return read[host]
+
+
 class LookupModule(LookupBase):
     def run(self, terms, variables=None, **kwargs):
         variables = variables or {}
@@ -316,7 +348,8 @@ class LookupModule(LookupBase):
             if refusal:
                 return [msg]
             raise AnsibleLookupError(msg)
-        hostvars = variables.get("hostvars") or {}
+        # (a play's hosts: before the run's first play: no hostvars yet)
+        hostvars = variables.get("hostvars") if "hostvars" in variables else InventoryHostvars(self._loader)
         refused = not_given(given, self._loader, in_inventory(hostvars, variables.get("inventory_hostname")))
 
         def read(host, name):

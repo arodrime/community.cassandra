@@ -59,6 +59,7 @@ _raw:
 from ansible.errors import AnsibleLookupError
 from ansible.plugins.lookup import LookupBase
 from ansible.plugins.loader import lookup_loader
+from ansible_collections.community.cassandra.plugins.lookup.cassandra_hosts import InventoryHostvars
 
 STATES = ("present", "absent")
 
@@ -93,7 +94,8 @@ class LookupModule(LookupBase):
         if not self.get_option("memo") and isinstance(memo, dict) and memo.get("group") == group \
                 and list(memo.get("hosts") or []) == hosts and isinstance(memo.get("states"), dict):
             return [h for h in hosts if memo["states"].get(h) == state]
-        hostvars = variables.get("hostvars") or {}
+        # (a play's hosts: before the run's first play: no hostvars yet)
+        hostvars = variables.get("hostvars") if "hostvars" in variables else InventoryHostvars(self._loader)
 
         def read(host):
             value = hostvars[host].get("cassandra_node_state") if host in hostvars else None

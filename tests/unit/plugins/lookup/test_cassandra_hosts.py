@@ -437,3 +437,43 @@ def test_cassandra_hosts_not_from_the_inventory(monkeypatch, extra, given, inven
     assert cassandra_hosts.not_given(given, _Loader(), inventory) == refused
     monkeypatch.setattr(context, "CLIARGS", {})  # no command line (the Python API, these tests): not checked
     assert cassandra_hosts.not_given(given, _Loader(), inventory) is None
+
+
+LIMITED = """
+all:
+  children:
+    alpha:
+      children:
+        alpha_dc1:
+          hosts: {a1: {}, a2: {}}
+    beta:
+      children:
+        beta_dc1:
+          hosts: {b1: {}, b2: {cassandra_node_state: absent}}
+  vars: {ansible_connection: local, ansible_python_interpreter: "{{ ansible_playbook_python }}"}
+"""
+
+
+@pytest.mark.playbook
+@pytest.mark.parametrize("limit", [[], ["--limit", "a1"], ["--limit", "b1,b2"]])
+def test_a_cluster_name_in_a_play_s_hosts_before_any_play_ran(tmp_path, limit):
+    """CASSANDRA_CLUSTER=<a cassandra_cluster_name> of group_vars/<group>/ (next to the inventory) in the hosts: of
+    a run's first play (no play ran before it: under --limit, the operation playbooks' localhost one is skipped):
+    the group named, its hosts marked absent left out; no hostvars there yet, the inventory's variables read."""
+    from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+    (tmp_path / "inv").mkdir()
+    (tmp_path / "inv" / "hosts.yml").write_text(LIMITED)
+    for group, name in (("alpha", "ALPHA CLUSTER"), ("beta", "BETA CLUSTER")):
+        (tmp_path / "inv" / "group_vars" / group).mkdir(parents=True)
+        (tmp_path / "inv" / "group_vars" / group / "main.yml").write_text("cassandra_cluster_name: %s\n" % name)
+    (tmp_path / "play.yml").write_text(
+        "- hosts: \"{{ query('community.cassandra.cassandra_nodes') }}\"\n  gather_facts: false\n"
+        "  tasks: [{debug: {msg: \"picked {{ lookup('community.cassandra.cassandra_hosts') }}\"}}]\n")
+    for env, group in (("ALPHA CLUSTER", "alpha"), ("BETA CLUSTER", "beta")):
+        rc, out = run_playbook(["-i", tmp_path / "inv", tmp_path / "play.yml"] + limit,
+                               env={"CASSANDRA_CLUSTER": env, "ANSIBLE_STDOUT_CALLBACK": "default"})
+        assert rc == 0 and "REFUSED" not in out, out
+        ran = sorted(set(re.findall(r"ok: \[(\w+)\]", out)))
+        hosts = {"alpha": ["a1", "a2"], "beta": ["b1"]}[group]  # (b2: absent)
+        assert ran == [h for h in hosts if not limit or h in limit[1].split(",")], out
+        assert ("picked %s" % group in out) is bool(ran), out
