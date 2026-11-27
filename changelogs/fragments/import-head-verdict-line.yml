@@ -1,0 +1,3 @@
+---
+trivial:
+- "import_cluster playbook - the verdict of the head (``2 entries to act on``, ``3 entries to review``, ``nothing to act on``) is on its own line under ``IMPORT <cluster>  <nodes>``, above its counts; the ops callback colours the head as before (green with nothing to act on)."

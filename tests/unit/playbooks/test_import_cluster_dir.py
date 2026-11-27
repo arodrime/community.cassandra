@@ -685,7 +685,7 @@ def test_on_a_link_written_over_is_moved_aside_never_the_file_it_points_to(tmp_p
 
 def test_on_a_copy_differing_only_by_the_run_s_time_and_build_is_left_alone(tmp_path):
     # each run writes its time and build in the report's head: a run again does not pile up moved copies
-    run = "IMPORT x  %s  1 node  nothing to act on\n  made by:  community.cassandra 3.0.0-rc1, commit %s"
+    run = "IMPORT x  %s  1 node\n  nothing to act on\n  made by:  community.cassandra 3.0.0-rc1, commit %s"
     plant_shareable(tmp_path, "c1", names=[])
     for name, text in shareable_texts(tmp_path, text=run % ("2026-11-19 10:11 CET", "1a2b3c4d")).items():
         (tmp_path / name).write_text(text)

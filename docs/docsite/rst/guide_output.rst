@@ -446,8 +446,8 @@ Task variables the callback reads, each a literal ``true`` in the task's own ``v
 
 Colours (Ansible's, so ``ANSIBLE_NOCOLOR``, ``ANSIBLE_FORCE_COLOR`` and an output that is not a terminal apply):
 
-- **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ... PASSED``,
-  ``IMPORT ... nothing to act on``, a ``CHECK`` with
+- **green** (ok): ``DONE``, ``HEALTHY``, ``NOTHING TO DO``, ``READY``, ``IMPORT ...`` with ``nothing to act on``
+  on the line under it (and its rows), a ``CHECK`` with
   nothing left to do, ``ALL 5 NODES UP``, the help's operation names;
 - **yellow** (change): a ``CHECK`` that says what a real run would do, ``← differs``, ``will be reset``,
   ``DELETED``, what a node would get, will get or got (``node1  would apply, then restart``, ``node1  will apply``,

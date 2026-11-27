@@ -2024,7 +2024,7 @@ def _next_writes_lines(report, self_check, width):
 def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, steps, reviews, sync=()):
     """The head, a paragraph per subject, a short line then one fact per row: the verdict with its counts, in sync
     with Ansible or not (sync), the self-check, the files written, where the report is and what made it -> [line].
-    e.g. ["IMPORT c1  3 nodes  2 entries to act on", "  1 TODO", "  1 thing worth a look", "",
+    e.g. ["IMPORT c1  3 nodes", "  2 entries to act on", "  1 TODO", "  1 thing worth a look", "",
           "  in sync with Ansible: no", "    apply_config would change 1 setting on 1 node", "",
           "  self-check not passed yet: TODO step 1", "", "  written:", "    inventories/c1.yml", "    group_vars/c1*/"]."""
     acted = len(steps) + sum(n for dummy, n, dummy2 in reviews)
@@ -2034,9 +2034,9 @@ def _head_lines(report, cluster, hosts_file, report_file, self_check_ok, same, s
         " (%d read)" % len(report.read) if report.unread else "")
     verdict = "%s to %s" % (out.plural(acted, "entry", "entries"), "act on" if steps else "review") if acted \
         else "nothing to act on"
-    lines = fill_text("IMPORT %s  %s%s  %s" % (cluster, report.when + "  " if report.when else "", nodes, verdict),
-                      report.width, "", "  ")
-    lines += ["  " + count for count in counts]
+    lines = fill_text("IMPORT %s  %s%s" % (cluster, report.when + "  " if report.when else "", nodes), report.width,
+                      "", "  ")
+    lines += ["  " + count for count in [verdict] + counts]
     if report.check:
         lines.append("  --check: inventory not written")
     lines += [""] + list(sync) + [""]
@@ -2262,7 +2262,7 @@ def cassandra_import_report(layout, written, report_file, self_check, self_check
     that found the same says so: its time is new); build: true for a line of the head with the collection's version
     and the git commit it was built from ("made by:", cassandra_build.label; the playbook's calls give it, false by
     default: no git or galaxy.yml read). Returns the lines.
-    e.g. -> ["IMPORT big_cluster  88 nodes  3 entries to review", "  3 hand-edit entries", "", ...]."""
+    e.g. -> ["IMPORT big_cluster  88 nodes", "  3 entries to review", "  3 hand-edit entries", "", ...]."""
     cluster = layout["cluster_group"]
     nodes = layout.get("nodes") or []
     read = [n for n in nodes if boolean(n.get("read", False), strict=False)]

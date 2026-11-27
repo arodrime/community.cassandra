@@ -67,7 +67,7 @@ def test_the_report_and_the_end_of_the_run(tmp_path, check):
     assert rc == 0, out
     lines = out.split("\n")
     head = next(i for i, line in enumerate(lines) if line.startswith("IMPORT big"))
-    assert lines[head].startswith("IMPORT big  90 nodes (89 read)  ")
+    assert lines[head] == "IMPORT big  90 nodes (89 read)"
     assert ("  --check: inventory not written" in lines[head:head + 9]) is check
     assert max(len(line) for line in lines[head:]) <= 79  # (a log's width)
     name = "report.check.txt" if check else "report.txt"
@@ -116,7 +116,7 @@ def test_the_shareable_copy(tmp_path, check):
         assert oct(key.stat().st_mode & 0o777) == "0o600" and "n1 = cass001" in key.read_text()
     text = copy.read_text()
     assert text.startswith("SHAREABLE COPY of an import_cluster report")
-    assert "\nIMPORT c1  90 nodes (89 read)  " in text
+    assert "\nIMPORT c1  90 nodes (89 read)\n" in text
     assert ("\n  --check: inventory not written\n" in text) is check
     assert not re.search(r"cass\d{3}|10\.0\.\d+\.\d+|\b[Bb]ig\b|\bbig_", text)
     assert "cass001" not in text

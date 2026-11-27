@@ -47,9 +47,10 @@ def test_check_is_green_only_with_nothing_to_do():
 
 
 def test_import_verdict():
-    # green only with nothing to act on: a report with things to do or review is plain, not a success
-    assert colour("IMPORT my_cluster (--check, nothing written)  4 nodes  nothing to act on") == C.COLOR_OK
-    assert colour("IMPORT my_cluster  4 nodes  2 entries to act on: 1 TODO, 1 hand edit") is None
+    # green only with nothing to act on: a report with things to do or review is plain, not a success (the IMPORT
+    # line read with the verdict under it, as the callback joins the head's first paragraph: _import_head)
+    assert colour("IMPORT my_cluster  4 nodes  nothing to act on  --check: inventory not written") == C.COLOR_OK
+    assert colour("IMPORT my_cluster  4 nodes  2 entries to act on  1 TODO  1 hand-edit entry") is None
     assert colour("IMPORT my_cluster  4 nodes  SELF-CHECK FAILED  3 entries to act on: 1 TODO, 2 hand edits") == C.COLOR_ERROR
     assert colour(u"SELF-CHECK FAILED \u2014 the inventory does not reproduce 2 nodes yet") == C.COLOR_ERROR
     assert colour("  Hand edits no variable covers (cassandra_config would revert them):") is None

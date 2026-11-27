@@ -193,7 +193,8 @@ _WAIT = re.compile(r"\S+  \S.*  (waiting  .*  \d+[smhd]\S*/\d+[smhd]\S*|(all bac
 # the first line of a plan or a screen ("ADD NODE  ...", "REFUSED  ..."): as the progress lines
 PLAN_COLOUR = "PROGRESS"
 _WARNING = re.compile(r"WARNING\b")  # wherever it is indented
-# the colour of a message line by its start, the lines indented under it the same
+# the colour of a message line by its start, the lines indented under it the same (import_cluster's IMPORT line: read
+# with the verdict under it, _import_head)
 _COLOURS = (
     (re.compile(r"(REFUSED|FAILED|STOPPED|NOT HEALTHY|UNREACHABLE|SELF-CHECK FAILED)\b"), "COLOR_ERROR"),
     (re.compile(r"\[\d+/\d+\] .*\b(STALLED|FAILED|TOO LONG|STOPPED|REFUSED)\b"), "COLOR_ERROR"),
@@ -341,6 +342,13 @@ def colour(line, above=None, progress=PROGRESS_COLOR, warning=None):
         if pattern.match(line):
             return shade(name, progress, warning)
     return shade(mark, progress, warning)
+
+
+def _import_head(texts, top):
+    """import_cluster's head, its first paragraph as one line, to colour its IMPORT line (texts[top]) by the
+    verdict under it: "IMPORT c1  3 nodes", "  nothing to act on" -> "IMPORT c1  3 nodes  nothing to act on"."""
+    end = next((i for i in range(top + 1, len(texts)) if not texts[i].strip()), len(texts))
+    return "  ".join([texts[top]] + [line.strip() for line in texts[top + 1:end]])
 
 
 def _indent(line):
@@ -902,7 +910,9 @@ class CallbackModule(DefaultCallback):
                 continue
             shades = _under(shades, line)
             above = shades[-1][1] if shades else None
-            hue = self._hue(line, above, color, info, headed and not recap and i == top)
+            # the IMPORT line: in the colour of its verdict, the line under it (_import_head)
+            hue = self._hue(_import_head(texts, top) if head and i == top else line, above, color, info,
+                            headed and not recap and i == top)
             # an indented line's own mark: that line only (the import's in sync line: its rows too); a FAILED or
             # STOPPED recap: its rows by their own marks
             failed = recap and i == top and first.startswith(("FAILED", "STOPPED"))

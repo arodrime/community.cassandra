@@ -1283,7 +1283,7 @@ def test_the_import_screen_sections_heavy_rules_entries_blank(tmp_path):
   tasks:
     - name: Show the summary
       ansible.builtin.debug:
-        msg: ["IMPORT my_cluster  3 nodes  2 to review", " ", "==========", "TO REVIEW", "    a: 1   node1", " ",
+        msg: ["IMPORT my_cluster  3 nodes", "  2 entries to review", " ", "==========", "TO REVIEW", "    a: 1   node1", " ",
               "    b: 2   node2", " ", "==========", "WHAT TO DO NEXT", "  1. Read TO REVIEW", "",
               "full report: reports/my_cluster/report.txt"]
       vars:
@@ -1291,7 +1291,7 @@ def test_the_import_screen_sections_heavy_rules_entries_blank(tmp_path):
 """
     rc, output = run(tmp_path, playbook)
     assert rc == 0, output
-    assert shown(output) == ["====", "", "IMPORT my_cluster  3 nodes  2 to review", "", "====", "", "TO REVIEW",
+    assert shown(output) == ["====", "", "IMPORT my_cluster  3 nodes", "  2 entries to review", "", "====", "", "TO REVIEW",
                              "    a: 1   node1", "", "    b: 2   node2", "", "====", "", "WHAT TO DO NEXT",
                              "  1. Read TO REVIEW", "", "----", "", "full report: reports/my_cluster/report.txt"]
 
@@ -1974,6 +1974,26 @@ def test_the_import_head_one_colour_per_row_its_rows_as_their_line(answer):
     assert set(color for dummy, color in shown[at:end]) == {verdict}, shown
     title = shown[0][1]
     assert title == "cyan" and set(color for dummy, color in shown[:at] + shown[end:]) == {title}, shown
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_the_import_head_green_by_its_verdict_on_the_line_under_it(check):
+    # the verdict on its own line under "IMPORT <cluster>  <nodes>": nothing to act on, the IMPORT line and its rows
+    # green (--check's too); entries to act on or review, the IMPORT line as a screen's first line (cyan), as before
+    from ansible import constants as C
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter.test_cassandra_import_report import (
+        report, node)
+    callback = quiet_callback(tty=False)
+    callback._print(report([node(i) for i in range(1, 4)], screen=True, width=79, check=check))
+    shown = [(line, color) for line, color, dummy in callback._display.shown if line.strip()]
+    at = next(i for i, (line, dummy) in enumerate(shown) if line.startswith("IMPORT "))
+    rows = ["IMPORT my_cluster  3 nodes", "  nothing to act on"] + (["  --check: inventory not written"] if check else [])
+    assert shown[at:at + len(rows)] == [(row, C.COLOR_OK) for row in rows], shown
+    for kwargs in ({},  # (an entry worth a look: to review)
+                   {"nodes": [node(1), node(2), node(3, read=False)], "ok": False, "allow_unread": True}):
+        shown = import_head_shown(**kwargs)
+        assert shown[0][0] == "IMPORT my_cluster  3 nodes" + (" (2 read)" if "nodes" in kwargs else ""), shown
+        assert re.match(r"  \d+ entr(y|ies) to (act on|review)$", shown[1][0]) and shown[0][1] == shown[1][1] == "cyan"
 
 
 def test_the_import_s_in_sync_line_by_its_answer():
