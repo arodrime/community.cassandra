@@ -299,3 +299,9 @@ def test_the_recap_repeats_an_unknown_variable_with_the_grep_that_finds_it():
     assert grep[0].startswith("  grep -RnF ") and all(line.endswith(" \\") for line in grep[:-1])
     assert not grep[-1].endswith("\\") and all(len(line) <= 79 for line in long), long
     assert grep[-1].endswith(" 'my inventories/test'") and len(grep) == 2
+    # a word longer than a line (a deep inventory path): whole, its " \\" on its own line's end, never alone
+    deep = "/srv/ansible/inventories/production/datacenter-europe-west/cluster-orders-main/hosts.yml"
+    lines = cassandra_warnings(cassandra_unknown_recap([{"cassandra_heap_sizee": ""}], [deep, "/w/inv2.yml"], "/w"))
+    assert lines[2:] == ["  grep -RnF -e cassandra_heap_sizee \\",
+                         "    /srv/ansible/inventories/production/datacenter-europe-west/cluster-orders-main \\",
+                         "    ."], lines

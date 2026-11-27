@@ -472,12 +472,14 @@ def fit(lines, width):
     command (a line of its own starting with ansible-playbook or ansible) cut
     between its arguments only, each line but the last ending with " \\" (it
     pastes as one command); an option and its value (-e name=value) kept
-    together. None or 0: as they are."""
+    together; a line ending " \\" (a command laid out already) as it is.
+    None or 0: as they are."""
     if not width:
         return list(lines)
     out = []
     for line in lines:
-        if len(line) <= width:
+        # (a line ending " \\": a command laid out already, its continuation kept on the same line)
+        if len(line) <= width or line.endswith(" \\"):
             out.append(line.replace(NBSP, " "))
             continue
         command = _COMMAND_LINE.match(line)
