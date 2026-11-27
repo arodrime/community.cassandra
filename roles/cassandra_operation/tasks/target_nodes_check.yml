@@ -9,6 +9,18 @@
 - name: No unknown variable, none under a former name
   ansible.builtin.import_tasks: variables_check.yml
 
+# the playbook's own refusal of a -e value (_cassandra_preflight_refused: its block, e.g. apply_config's apply_only
+# with a part it does not have), as early: preflight's first play, its nodes' one too (the first under --limit)
+- name: Refuse the playbook's own variables
+  ansible.builtin.fail:
+    msg: "{{ _cassandra_preflight_refused | join(_nl) }}"
+  run_once: true
+  tags: [always]  # under --tags too
+  when: _cassandra_preflight_refused | default([]) | length > 0
+  vars:
+    cassandra_output: true  # a verdict: its msg as is (ops callback)
+    _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
+
 - name: Only where the playbook takes it
   ansible.builtin.assert:
     that: >-

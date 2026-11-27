@@ -180,7 +180,7 @@ OPERATIONS = [
                 " gives Cassandra are done in its one restart; another series (upgrade), a node to add or remove"
                 " (topology) stop the run before any change, with the command.",
      "options": [RESUME, ("-e cassandra_allow_unknown_patch=true", "a release past the patch notes", "false"),
-                 ("-e apply_only=config,linux", "only these parts, config always", "all parts"),
+                 ("-e apply_only=java,linux", "these parts, config and unit too", "all parts"),
                  ("-e apply_full=true", "the whole config compare everywhere", "false")],
      "example": ("the settings that differ, changing nothing", ["--check"])},
     {"name": "change_seeds", "theme": "cluster", "guide": "Changing the seeds",

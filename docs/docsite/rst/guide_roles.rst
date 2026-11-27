@@ -1175,10 +1175,11 @@ found unchanged whose facts the rest changed, naming them.
 ``-e apply_only=<parts>`` (e.g. ``apply_only=config`` or ``apply_only=config,linux``) compares and applies only
 those parts: ``config`` (the config files, the JMX users' files, the Prometheus exporter), ``unit`` (the
 ``cassandra`` unit), ``java``, ``linux`` (the OS settings), ``install`` (the packages and tools, a newer release of
-the series), ``repository``, ``medusa``, ``firewall``, ``axonops``. ``config`` and ``unit`` are always compared: the
-restart decision reads them (the files changed since Cassandra started; the unit is written at every restart). The
+the series), ``repository``, ``medusa``, ``firewall``, ``axonops``. ``config`` and ``unit`` are always compared, given or not,
+each once (``apply_only=java`` runs ``config``, ``unit`` and ``java``): the restart decision reads them (the files changed since Cassandra started; the unit is written at every restart). The
 plan and the recap say the parts left out (``WARNING  not checked (apply_only): linux, install, ...``), and so does
-the report. A name that is not a part stops the run before any change, with the list of the parts. A part left out
+the report. A name that is not a part stops the run in its first play, before the cluster is read, with the list of the
+parts. A part left out
 that a node needs stops it too: a newer release of its series to install (``install``), the AxonOps agent its
 ``cassandra-env.sh`` loads (``axonops``), another Java to move to (``java``: its plan is read whatever ``apply_only``
 says). Each stop gives the command to run. A resumed run (``-e cassandra_rolling_resume=true``) must give the parts the

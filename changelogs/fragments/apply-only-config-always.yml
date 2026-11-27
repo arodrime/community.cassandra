@@ -1,0 +1,3 @@
+---
+bugfixes:
+- "apply_config playbook - ``-e apply_only`` without ``config`` (``apply_only=java``) runs ``config``, ``unit`` and ``java``, each once, as the docs say (it was refused); a part named twice runs once. An unknown part is refused in the run's first play (the nodes' one under ``--limit``), before the cluster is read, with the command to run (``--limit`` kept)."

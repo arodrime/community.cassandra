@@ -39,10 +39,10 @@ def _names(value):
 def cassandra_apply_only(value, command=""):
     """value: -e apply_only (a comma-separated string, a list; '', None or all: every part); command: the command of
     this run (cassandra_command, without apply_only) -> {parts, left_out, refused}: the parts compared and applied
-    (config and unit always), those left out, both in the order of PARTS; refused: the lines of the refusal ([] when
-    every name is a part and config is among them), its way out the command with the parts given, config first.
-    Example: "config,linux" -> {"parts": ["config", "unit", "linux"], "left_out": ["java", "install", ...],
-    "refused": []}."""
+    (config and unit always, given or not: ALWAYS), each once, those left out, both in the order of PARTS; refused:
+    the lines of the refusal ([] when every name is a part), its way out the command with the parts given, config
+    first. Example: "java" or "config,java,config" -> {"parts": ["config", "unit", "java"], "left_out": ["linux",
+    ...], "refused": []}."""
     names = _names(value)
     if not names or names == ["all"]:  # (all: every part, as without apply_only; said so to resume a run)
         return {"parts": list(PARTS), "left_out": [], "refused": []}
@@ -58,9 +58,6 @@ def cassandra_apply_only(value, command=""):
     elif "all" in names:
         refused = ["apply_only: all stands for every part: give it alone", "WAY OUT  run:",
                    "  %s -e apply_only=all" % (command or "ansible-playbook community.cassandra.apply_config")]
-    elif "config" not in names:
-        refused = ["apply_only: config is not among the parts given",
-                   "config is always compared: the restart decision reads it"] + way_out
     else:
         refused = []
     parts = [p for p in PARTS if p in names or p in ALWAYS]

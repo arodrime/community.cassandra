@@ -317,25 +317,59 @@ def test_the_other_compares_follow_apply_only():
     ("config, linux", ["config", "unit", "linux"], ["java", "install", "repository", "medusa", "firewall", "axonops"]),
     (["linux", "config", "unit"], ["config", "unit", "linux"],
      ["java", "install", "repository", "medusa", "firewall", "axonops"]),
+    # (owner, rc3) config and unit always, given or not, each once: no refusal without config
+    ("java", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall", "axonops"]),
+    ("config,java,config", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall",
+                                                       "axonops"]),
+    ("java,unit,unit", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall", "axonops"]),
 ])
 def test_apply_only_gives_the_parts(given, parts, left_out):
     said = cassandra_apply_only(given)
     assert said == {"parts": parts, "left_out": left_out, "refused": []}
 
 
-def test_apply_only_refuses_an_unknown_part_or_no_config():
+def test_apply_only_refuses_an_unknown_part():
     said = cassandra_apply_only("config,linus", "ansible-playbook -i inv community.cassandra.apply_config --check")["refused"]
     assert said == (["apply_only: not a part of apply_config:", "  linus", "its parts:"] + ["  " + p for p in PARTS]
                     + ["  all (every part, given alone)", "WAY OUT  run:",
                        "  ansible-playbook -i inv community.cassandra.apply_config --check -e apply_only=config"])
-    said = cassandra_apply_only("linux", "CMD")["refused"]
-    assert said == ["apply_only: config is not among the parts given",
-                    "config is always compared: the restart decision reads it", "WAY OUT  run:",
-                    "  CMD -e apply_only=config,linux"]
+    said = cassandra_apply_only("java,linus", "CMD")["refused"]  # (config not given: first in the way out)
+    assert said[1] == "  linus" and said[-1] == "  CMD -e apply_only=config,java"
     assert cassandra_apply_only("all") == cassandra_apply_only("")  # (to resume a run of every part)
     # (round 3, C3: all with parts: refused, given alone)
     assert cassandra_apply_only("all,linux", "CMD")["refused"] == [
         "apply_only: all stands for every part: give it alone", "WAY OUT  run:", "  CMD -e apply_only=all"]
+
+
+LOCAL = """
+all:
+  vars: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: "{{ ansible_playbook_python }}"}
+  children:
+    alpha:
+      children:
+        alpha_dc1:
+          hosts: {a1: {}, a2: {}}
+"""
+
+
+@pytest.mark.playbook
+@pytest.mark.parametrize("limit", [[], ["--limit", "a1"]])
+def test_apply_only_an_unknown_part_refused_first_the_others_given_or_not(tmp_path, limit):
+    # (owner, rc3) an unknown part: refused by preflight's first play, the nodes' one under --limit (the localhost
+    # one skipped), before the cluster is read, the way out with --limit kept; config left out: not refused (config
+    # and unit always: the run goes on, here to its root check)
+    from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+    (tmp_path / "hosts.yml").write_text(LOCAL)
+    run = ["-i", tmp_path / "hosts.yml", "community.cassandra.apply_config", "--check"] + limit
+    env = {"ANSIBLE_STDOUT_CALLBACK": "community.cassandra.ops"}
+    rc, out = run_playbook(run + ["-e", "apply_only=linus,java"], env=env)
+    assert rc != 0 and "REFUSED  apply_config  alpha  nothing was changed" in out, out
+    assert "apply_only: not a part of apply_config:" in out and "    linus" in out, out
+    way_out = re.sub(r" \\\n\s+", " ", out)  # (the command on one line)
+    assert "apply_config %s-e apply_only=config,java\n" % ("--limit a1 " if limit else "") in way_out, out
+    assert "Checking the cluster" not in out, out  # (before the cluster is read)
+    rc, out = run_playbook(run + ["-e", "apply_only=java"], env=env)
+    assert "apply_only" not in out and "Checking the cluster" in out, out
 
 
 def test_apply_only_refuses_to_leave_out_what_a_node_needs():
