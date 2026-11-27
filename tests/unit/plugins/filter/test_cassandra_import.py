@@ -1863,6 +1863,58 @@ def test_layout_over_what_is_not_compared():
     assert layout["unread_files"] == ["group_vars/all/vault.yml"]
 
 
+LOG_ISO = "%-5level [%thread] %date{ISO8601} %F:%L - %msg%n"  # the 4.x stock pattern
+LOG_UTC = '%-5level [%thread] %date{"yyyy-MM-dd\'T\'HH:mm:ss,SSS", UTC} %F:%L - %msg%n'  # the 5.0 stock one
+
+
+def _stock_node_over(series, theirs):
+    """A node with the stock files of its series, imported over the user's files theirs ([(path, content)]) ->
+    (layout, {file: cassandra_log_pattern} as the import writes it, the self-check's differences)."""
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import import cassandra_inventory_layout_over
+    from ansible_collections.community.cassandra.plugins.filter.cassandra_import_check import cassandra_import_self_check
+    from ansible_collections.community.cassandra.tests.unit.plugins.filter import test_cassandra_import_check as check
+    files = check.seeded(check.stock(series))
+    imported = cassandra_config_import(files, series, check.FACTS, "", "/var/lib/cassandra")
+    node = {"name": "n1", "address": "10.0.0.1", "hostname": "n1", "dc": "dc1", "rack": "r1", "read": True,
+            "vars": dict(imported["vars"], cassandra_version=series, cassandra_install_method="system"),
+            "notes": [], "keep": {"cassandra_service_unit_manage": False}}
+    node.update((k, imported[k]) for k in ("hand_edits", "normalized", "comments", "moved", "trusted", "rewritten",
+                                           "cleanup", "not_moved"))
+    user = [{"path": p, "content": c} for p, c in theirs]
+    layout = cassandra_inventory_layout_over([node], imported["vars"].get("cassandra_cluster_name", "c"), user)
+    inventory = cassandra_inventory_files(layout)
+    written = dict((f["path"], yaml.safe_load(f["content"])["cassandra_log_pattern"]) for f in inventory
+                   if f["path"].endswith(".yml") and "cassandra_log_pattern" in (yaml.safe_load(f["content"]) or {}))
+    differences = cassandra_import_self_check(user + inventory, layout["hosts"], "n1", check.FACTS, files, {},
+                                              "/var/lib/cassandra", "11", "", {}, inventory_dir="/p/inv")["differences"]
+    return layout, written, differences
+
+
+def test_layout_over_a_stock_50_pattern_against_a_value_in_all():
+    """A 5.0 node at its stock pattern (a default made of the role's vars), the 4.x one in group_vars/all: the
+    node's pattern written at cluster level, listed in yours; the self-check finds nothing."""
+    layout, written, differences = _stock_node_over("50x", [("group_vars/all/local.yml",
+                                                             'cassandra_log_pattern: "%s"\n' % LOG_ISO)])
+    assert list(written.values()) == [LOG_UTC] and list(written)[0].endswith("/main.yml")
+    assert not list(written)[0].startswith("host_vars/")
+    assert [(y["key"], y["value"]) for y in layout["yours"]] == [("cassandra_log_pattern", LOG_UTC)]
+    assert "cassandra_log_pattern" not in layout["not_compared"] and differences == []
+
+
+def test_layout_over_a_stock_41_pattern_equal_to_the_value_in_all():
+    """A 4.1 node at its stock pattern, the same one in group_vars/all: nothing written, nothing to say."""
+    layout, written, differences = _stock_node_over("41x", [("group_vars/all/local.yml",
+                                                             'cassandra_log_pattern: "%s"\n' % LOG_ISO)])
+    assert written == {} and layout["yours"] == [] and differences == []
+    assert "cassandra_log_pattern" not in layout["not_compared"]
+
+
+def test_layout_over_a_stock_50_pattern_alone():
+    """A 5.0 node at its stock pattern, no value of the user's: nothing written (the default)."""
+    layout, written, differences = _stock_node_over("50x", [])
+    assert written == {} and layout["yours"] == [] and differences == []
+
+
 def test_layout_over_a_file_of_theirs_after_main():
     """host_vars/n1/zz.yml sorts after the import's main.yml: it still wins, said so."""
     layout = _over(_owner_nodes()[:1], [("host_vars/n1/zz.yml", "cassandra_config_user: cassandra\n")])

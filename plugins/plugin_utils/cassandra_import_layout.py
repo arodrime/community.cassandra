@@ -791,14 +791,27 @@ def roles_defaults():
     return out
 
 
+@functools.lru_cache(maxsize=None)
+def roles_vars():
+    """Every role's vars/main.yml (what some defaults are made of: the log patterns of each series), read once:
+    not to be changed."""
+    out = {}
+    for role in roles_with_defaults():
+        try:
+            out.update(role_file(role, "vars") or {})
+        except (IOError, OSError):  # (no vars/main.yml)
+            continue
+    return out
+
+
 def templated(value):
     return isinstance(value, str) and not isinstance(value, UserUnsafe) and re.search(r"\{[{%]", value) is not None
 
 
 def resolved(key, values, defaults):
     """key's value as the node has it: its value read (never templated), else the collection's default (a
-    template of other defaults rendered in a sandbox, a list or number again as Ansible would give it); MISSING
-    when unknown (a default made of facts, a filter of Ansible's)."""
+    template of other defaults and of the roles' vars rendered in a sandbox, a list or number again as Ansible
+    would give it); MISSING when unknown (a default made of facts, a filter of Ansible's)."""
     if key in values:
         return values[key]
     if key not in defaults:
@@ -809,7 +822,7 @@ def resolved(key, values, defaults):
         if not templated(value):
             return value
         try:
-            value = env.from_string(value).render(**dict(defaults, **values))
+            value = env.from_string(value).render(**dict(roles_vars(), **dict(defaults, **values)))
         except Exception:  # pylint: disable=broad-except
             return MISSING
         try:

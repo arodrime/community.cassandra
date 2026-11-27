@@ -1,0 +1,3 @@
+---
+bugfixes:
+- "import_cluster playbook - a node at the stock log pattern of its series (5.0's) with a ``cassandra_log_pattern`` of yours in ``group_vars/all`` gets its pattern written at cluster level, so the self-check passes: the import now knows a default made of the roles' ``vars/main.yml`` (``cassandra_log_pattern``'s), it skipped that setting as not compared."
