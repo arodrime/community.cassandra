@@ -60,9 +60,9 @@ def cassandra_confirm_stop(why, operation="", cluster="", unchanged="nothing cha
     """why: what stopped the question ("at your request", "no yes or no after 3 answers"); operation: the playbook
     asked about ("" when not one: a role's question); unchanged: what was left as it was; limit: the run's --limit;
     again: the run's own command when its playbook builds it (stop_rack's -e cassandra_target_dc...), else the
-    playbook's with the run's inventory, cluster, --limit and targets (its target variables set: {name: value}). -> the stop's lines: the verdict naming the operation
-    and the cluster, then WAY OUT: the command to run again (the other -e options of this run not known here: said
-    so).
+    playbook's with the run's inventory, cluster, --limit and targets (its target variables set: {name: value}).
+    -> the stop's lines: the verdict naming the operation and the cluster, then WAY OUT: the command to run again
+    (the other -e options of this run not known here: said so).
     Example: "at your request", "apply_config", "c1", inventory=["inv.yml"] -> ["STOPPED  apply_config  c1  at your
     request, nothing changed", "WAY OUT  run it again (add the -e options you gave, if any), answer yes:",
     "  ansible-playbook -i inv.yml community.cassandra.apply_config"]."""
