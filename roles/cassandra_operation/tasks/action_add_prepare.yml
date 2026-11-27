@@ -80,7 +80,8 @@
     # what an -e cassandra_config_confirm=true can't override: the add's question covered it
     _cassandra_config_no_question: "{{ _cassandra_add_config_confirm | string | lower == 'false' }}"
     _cassandra_config_new_node: "{{ _cassandra_add_config_new }}"
-    _cassandra_confirm_operation: add_node  # (the way out of a no to its question: run it again)
+    # (the way out of a no to its question: run it again; also add_datacenter's, and topology's step)
+    _cassandra_confirm_operation: "{{ _cassandra_screen_asked_by | default('') or cassandra_service_summary_operation | default('add_node') }}"
 
 - name: Open the firewall
   ansible.builtin.include_role:

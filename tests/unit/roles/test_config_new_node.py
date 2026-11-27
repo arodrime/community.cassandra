@@ -128,7 +128,7 @@ def prepare_vars(state, confirm=None, replace=False, planned=True, operation_con
     facts = dict((k, render(t, **v)) for k, t in tell["ansible.builtin.set_fact"].items())
     include = tasks["Write the config"]
     assert include["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config"}
-    assert include["vars"]["_cassandra_confirm_operation"] == "add_node"  # (the way out of a no: run it again)
+    assert "default('add_node')" in include["vars"]["_cassandra_confirm_operation"]  # (the way out of a no)
     return dict((k, render(t, **facts)) for k, t in include["vars"].items()
                 if k not in ("cassandra_seeds", "_cassandra_confirm_operation"))
 
