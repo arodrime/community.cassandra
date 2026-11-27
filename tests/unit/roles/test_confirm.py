@@ -405,8 +405,8 @@ def test_the_stop_passes_the_limit_the_caller_s_command_and_a_resume():
             variables[key] = render_with(stop["vars"][key], variables)
         return render_with(stop["vars"][name], variables)
 
-    assert rendered("_stop", ansible_limit="n3") == {"inventory": ["inv.yml"], "operation": "apply_config",
-                                                      "cluster": "", "limit": "n3", "again": ""}
+    assert rendered("_stop", ansible_limit="n3") == {
+        "inventory": ["inv.yml"], "operation": "apply_config", "cluster": "", "limit": "n3", "again": ""}
     assert rendered("_stop", _cassandra_confirm_again="X")["again"] == "X"
     assert rendered("_stop", _cassandra_confirm_operation="topology")["operation"] == "topology"
     assert rendered("_unchanged") == "nothing changed"

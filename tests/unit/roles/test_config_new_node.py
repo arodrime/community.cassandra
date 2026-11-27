@@ -128,7 +128,9 @@ def prepare_vars(state, confirm=None, replace=False, planned=True, operation_con
     facts = dict((k, render(t, **v)) for k, t in tell["ansible.builtin.set_fact"].items())
     include = tasks["Write the config"]
     assert include["ansible.builtin.include_role"] == {"name": "community.cassandra.cassandra_config"}
-    return dict((k, render(t, **facts)) for k, t in include["vars"].items() if k != "cassandra_seeds")
+    assert include["vars"]["_cassandra_confirm_operation"] == "add_node"  # (the way out of a no: run it again)
+    return dict((k, render(t, **facts)) for k, t in include["vars"].items()
+                if k not in ("cassandra_seeds", "_cassandra_confirm_operation"))
 
 
 @pytest.mark.parametrize("state, replace, confirm, given, new", [
@@ -231,7 +233,8 @@ def test_create_cluster_marks_the_nodes_it_emptied_new():
     assert forget["when"] == "not ansible_check_mode"
     # for its cassandra_config only (not a fact a later include in the same run would read)
     role = [r for p in plays for r in p.get("roles", []) if isinstance(r, dict) and r.get("role") == "community.cassandra.cassandra_config"]
-    assert [r["vars"] for r in role] == [{"_cassandra_config_new_node": "{{ _cassandra_create_cluster_emptied | default(false) }}"}]
+    assert [r["vars"] for r in role] == [{"_cassandra_config_new_node": "{{ _cassandra_create_cluster_emptied | default(false) }}",
+                                          "_cassandra_confirm_operation": "create_cluster"}]
     assert render(role[0]["vars"]["_cassandra_config_new_node"]) is False
     assert render(role[0]["vars"]["_cassandra_config_new_node"], _cassandra_create_cluster_emptied=True) is True
 
