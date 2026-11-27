@@ -289,5 +289,13 @@ def test_the_recap_repeats_an_unknown_variable_with_the_grep_that_finds_it():
         "  grep -RnF -e 'cassandra_# Logging (logback.xml)log_console' inventories/test"]
     two = cassandra_unknown_recap([{"cassandra_b": ""}, {"cassandra_a": ""}], ["/inv"])
     assert two[0]["text"][0].startswith("2 variables not known")
-    assert two[0]["text"][2].endswith("grep -RnF -e cassandra_a -e cassandra_b /")  # (a source with no dir of its own)
+    assert two[0]["text"][2].replace(u"\xa0", " ").endswith("grep -RnF -e cassandra_a -e cassandra_b /")  # (a source with no dir of its own)
     assert cassandra_unknown_recap([{}, None], ["/inv"]) == []
+    # (audit B1) a grep longer than a line: cut between words, " \\" at the end of each line but the last, a quoted
+    # word (a path with a space) kept whole
+    long = cassandra_warnings(cassandra_unknown_recap([{key: "", "cassandra_seeds_typo_with_a_long_name": ""}],
+                                                      ["/w/my inventories/test/hosts.yml"], "/w"))
+    grep = long[2:]
+    assert grep[0].startswith("  grep -RnF ") and all(line.endswith(" \\") for line in grep[:-1])
+    assert not grep[-1].endswith("\\") and all(len(line) <= 79 for line in long), long
+    assert grep[-1].endswith(" 'my inventories/test'") and len(grep) == 2

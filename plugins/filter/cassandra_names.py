@@ -239,10 +239,25 @@ def cassandra_unknown_recap(unknown, sources=None, cwd=None):
         base = out.path_from(base, cwd) if cwd else base
         if base not in dirs:
             dirs.append(base)
-    grep = " ".join(["grep -RnF"] + ["-e %s" % shlex.quote(n) for n in names] + [shlex.quote(d) for d in dirs or ["."]])
+    words = ["grep", "-RnF"] + ["-e %s" % shlex.quote(n) for n in names] + [shlex.quote(d) for d in dirs or ["."]]
     return [{"label": "", "text": ["%s not known to this collection (probably a typo): see above"
-                                   % out.plural(len(names), "variable"), " " * 9 + "find it in the inventory:",
-                                   "  " + grep]}]
+                                   % out.plural(len(names), "variable"), " " * 9 + "find it in the inventory:"]
+             + _shell_lines(words, "  ", "    ")}]
+
+
+def _shell_lines(words, indent, hang, width=79):
+    """A shell command's words (quoted already) on lines of width columns at most, cut between words only, each line
+    but the last ending with " \\" (it pastes as one command); a word longer than a line stays whole, its spaces
+    never broken (NBSP: the fit of the warning lines keeps it) -> [line]."""
+    words = [w.replace(" ", out.NBSP) for w in words]
+    lines, line = [], indent + words[0]
+    for i, word in enumerate(words[1:], 2):
+        if len(line) + 1 + len(word) + (2 if i < len(words) else 0) > width:  # (room for " \\" but on the last)
+            lines.append(line + " \\")
+            line = hang + word
+        else:
+            line += " " + word
+    return lines + [line]
 
 
 def cassandra_renamed_names(names):
