@@ -319,8 +319,8 @@ def test_the_other_compares_follow_apply_only():
      ["java", "install", "repository", "medusa", "firewall", "axonops"]),
     # (owner, rc3) config and unit always, given or not, each once: no refusal without config
     ("java", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall", "axonops"]),
-    ("config,java,config", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall",
-                                                       "axonops"]),
+    ("config,java,config", ["config", "unit", "java"],
+     ["linux", "install", "repository", "medusa", "firewall", "axonops"]),
     ("java,unit,unit", ["config", "unit", "java"], ["linux", "install", "repository", "medusa", "firewall", "axonops"]),
 ])
 def test_apply_only_gives_the_parts(given, parts, left_out):
