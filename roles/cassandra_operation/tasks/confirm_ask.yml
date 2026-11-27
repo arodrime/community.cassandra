@@ -5,7 +5,9 @@
 # It includes itself again after an answer that is neither yes nor no (pause
 # has no until on every ansible-core version). _cassandra_confirm_skip: the
 # variable that skips the question, said without a terminal (default
-# cassandra_operation_confirm); _cassandra_confirm_unchanged: what its stops
+# cassandra_operation_confirm); _cassandra_confirm_operation, _cassandra_confirm_again:
+# the playbook asked about and its exact command, for the way out of a no (default: screen.yml's operation, with the
+# run's inventory, cluster and --limit); _cassandra_confirm_unchanged: what its stops
 # say was left as it was (default "nothing changed"; cassandra_config, after
 # other roles of the same play: "config not written"). A stop stops the play
 # (run_once), every node of it.
@@ -51,11 +53,18 @@
   when: _cassandra_confirm_answer not in ['go', 'again']
   vars: &confirm_stop_vars
     cassandra_output: true
-    _unchanged: "{{ _cassandra_confirm_unchanged | default('nothing changed') }}"
+    # (a resume: what the interrupted run did stays done)
+    _unchanged: >-
+      {{ _cassandra_confirm_unchanged | default('nothing changed in this run'
+         if cassandra_rolling_resume | default(false) | bool else 'nothing changed') }}
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     # the playbook asked about (screen.yml's; _cassandra_confirm_operation: another's), the cluster, the run's
     # command: the way out runs it again
-    _stop: "{{ _cassandra_run_command_args | combine({'operation': _operation, 'cluster': _cluster}) }}"
+    # (its --limit; _cassandra_confirm_again: the caller's own command, its -e options in it)
+    _stop: >-
+      {{ _cassandra_run_command_args | combine({'operation': _operation, 'cluster': _cluster,
+                                                'limit': ansible_limit | default(''),
+                                                'again': _cassandra_confirm_again | default('')}) }}
     _operation: "{{ _cassandra_confirm_operation | default((cassandra_screen | default({})).operation | default('')) }}"
     _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 

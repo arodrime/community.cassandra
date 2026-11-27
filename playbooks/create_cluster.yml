@@ -428,6 +428,7 @@
     - role: community.cassandra.cassandra_config
       vars:
         _cassandra_config_new_node: "{{ _cassandra_create_cluster_emptied | default(false) }}"
+        _cassandra_confirm_operation: create_cluster  # (the way out of a no to its question: run it again)
     - role: community.cassandra.cassandra_firewall
       when: cassandra_manage_firewall | default(false) | bool
     - role: community.cassandra.cassandra_medusa

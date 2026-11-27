@@ -366,6 +366,7 @@
       when: _tp_todo | bool
       vars:
         cassandra_confirm_prompt: "{{ 'Run this step?' if _tp_steps | int == 1 else 'Run these ' ~ _tp_steps ~ ' steps?' }}"
+        _cassandra_confirm_operation: topology  # (the way out of a no: run it again)
         _tp_steps: >-
           {{ (cassandra_topology_plan.add + cassandra_topology_plan.remove) | length
              + (1 if cassandra_topology_plan.seeds.step else 0) }}

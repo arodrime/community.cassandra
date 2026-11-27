@@ -191,6 +191,11 @@
           {%- endfor -%}
           {{ l }}
         cassandra_screen_question: "Stop {{ _rack_nodes | join(', ') }}?"
+        # the way out of a no: this run's command again, its rack in it
+        _cassandra_confirm_again: >-
+          {{ 'stop_rack' | community.cassandra.cassandra_command(
+               extra={'cassandra_target_dc': cassandra_target_dc, 'cassandra_target_rack': cassandra_target_rack},
+               limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
         cassandra_screen:
           operation: stop_rack
           summary: "stop {{ cassandra_target_dc | default('(not set)') }} / {{ cassandra_target_rack | default('(not set)') }}"

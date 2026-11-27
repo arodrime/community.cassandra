@@ -56,20 +56,22 @@ WIDTH = 79
 
 
 def cassandra_confirm_stop(why, operation="", cluster="", unchanged="nothing changed", inventory=None,
-                           default_inventory=None, hosts="", cwd=None):
+                           default_inventory=None, hosts="", cwd=None, limit="", again=""):
     """why: what stopped the question ("at your request", "no yes or no after 3 answers"); operation: the playbook
-    asked about ("" when not one: a role's question); unchanged: what was left as it was. -> the stop's lines: the
-    verdict naming the operation and the cluster, then WAY OUT: the playbook's command to run again (the -e options
-    of this run not known here: said so).
+    asked about ("" when not one: a role's question); unchanged: what was left as it was; limit: the run's --limit;
+    again: the run's own command when its playbook builds it (stop_rack's -e cassandra_target_dc...), else the
+    playbook's with the run's inventory, cluster and --limit. -> the stop's lines: the verdict naming the operation
+    and the cluster, then WAY OUT: the command to run again (the other -e options of this run not known here: said
+    so).
     Example: "at your request", "apply_config", "c1", inventory=["inv.yml"] -> ["STOPPED  apply_config  c1  at your
-    request, nothing changed", "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+    request, nothing changed", "WAY OUT  run it again (with the other -e options you gave), answer yes:",
     "  ansible-playbook -i inv.yml community.cassandra.apply_config"]."""
     head = "  ".join(x for x in ("STOPPED", str(operation or ""), str(cluster or ""), "%s, %s" % (why, unchanged)) if x)
     if not operation:
         return out.fit([head], WIDTH)
-    command = cassandra_command(str(operation), inventory=inventory, hosts=hosts, cwd=cwd,
-                                default_inventory=default_inventory)
-    return out.fit([head, "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+    command = str(again or "") or cassandra_command(str(operation), inventory=inventory, hosts=hosts, cwd=cwd,
+                                                    limit=limit or None, default_inventory=default_inventory)
+    return out.fit([head, "WAY OUT  run it again (with the other -e options you gave), answer yes:",
                     "  " + command], WIDTH)
 
 

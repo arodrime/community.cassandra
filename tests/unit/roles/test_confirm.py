@@ -268,7 +268,7 @@ def test_screen_then_the_question(tmp_path):
     assert 'WARNING  replication: orders keeps 2 replicas' in output
     assert re.search(r"Confirm the operation\]\r?\nRemove node7\? Answer yes or no:", output)
     assert "STOPPED  decommission_node  at your request, nothing changed" in output
-    assert "WAY OUT  to go on, run it again" in output and "community.cassandra.decommission_node" in output
+    assert "WAY OUT  run it again" in output and "community.cassandra.decommission_node" in output
 
 
 def test_screen_is_printed_before_a_run_without_terminal_stops(tmp_path):
@@ -375,8 +375,70 @@ def test_the_stop_after_a_no_names_the_cluster_and_the_command_again():
     assert cassandra_confirm_stop("at your request", "apply_config", "test_cluster", inventory=["/w/inv/hosts.yml"],
                                   cwd="/w") == [
         "STOPPED  apply_config  test_cluster  at your request, nothing changed",
-        "WAY OUT  to go on, run it again (and the -e options you gave) and answer yes:",
+        "WAY OUT  run it again (with the other -e options you gave), answer yes:",
         "  ansible-playbook -i inv/hosts.yml community.cassandra.apply_config"]
+    # (audit A1) the run's --limit kept: never a whole-cluster command after a run on some nodes
+    assert cassandra_confirm_stop("at your request", "rolling_restart", "test_cluster", limit="n1,n3")[-1] == (
+        "  ansible-playbook community.cassandra.rolling_restart --limit n1,n3")
+    # the caller's own command (stop_rack: its rack), as it built it
+    assert cassandra_confirm_stop("at your request", "stop_rack", "test_cluster", limit="n1",
+                                  again="ansible-playbook community.cassandra.stop_rack -e x=y")[-1] == (
+        "  ansible-playbook community.cassandra.stop_rack -e x=y")
     # a role's question (cassandra_config): no playbook to name
     assert cassandra_confirm_stop("no yes or no after 3 answers", "", "test_cluster", "config not written") == [
         "STOPPED  test_cluster  no yes or no after 3 answers, config not written"]
+
+
+def test_the_stop_passes_the_limit_the_caller_s_command_and_a_resume():
+    """(audit A1, B2, C) confirm_ask.yml gives the filter the run's --limit and the caller's own command; a resume
+    says nothing changed in this run (the interrupted one did)."""
+    import yaml
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "confirm_ask.yml")
+    with open(path, encoding="utf-8") as f:
+        stop = next(t for t in yaml.safe_load(f) if t["name"] == "Stop at the operator's request")
+
+    def rendered(name, **variables):
+        variables = dict(dict(hostvars={"localhost": {}}, _cassandra_run_command_args={"inventory": ["inv.yml"]},
+                              cassandra_screen={"operation": "apply_config"}), **variables)
+        for key in ("_operation", "_cluster"):
+            variables[key] = render_with(stop["vars"][key], variables)
+        return render_with(stop["vars"][name], variables)
+
+    assert rendered("_stop", ansible_limit="n3") == {"inventory": ["inv.yml"], "operation": "apply_config",
+                                                      "cluster": "", "limit": "n3", "again": ""}
+    assert rendered("_stop", _cassandra_confirm_again="X")["again"] == "X"
+    assert rendered("_stop", _cassandra_confirm_operation="topology")["operation"] == "topology"
+    assert rendered("_unchanged") == "nothing changed"
+    assert rendered("_unchanged", cassandra_rolling_resume=True) == "nothing changed in this run"
+    assert rendered("_unchanged", _cassandra_confirm_unchanged="config not written") == "config not written"
+
+
+def test_every_question_s_way_out_names_its_playbook():
+    """(audit B2, B3) stop_rack and upgrade give their own command (their -e options in it); topology's question and
+    cassandra_config's within create_cluster and add_node name their playbook."""
+    import yaml
+    top = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+
+    def text(*parts):
+        with open(os.path.join(top, *parts), encoding="utf-8") as f:
+            return f.read()
+    for playbook, words in (("stop_rack.yml", ("'stop_rack' |", "cassandra_target_rack", "limit=ansible_limit")),
+                            ("upgrade.yml", ("'upgrade' |", "cassandra_upgrade_phase=", "limit=ansible_limit"))):
+        again = [v["_cassandra_confirm_again"] for v in _vars(yaml.safe_load(text("playbooks", playbook)))
+                 if "_cassandra_confirm_again" in v]
+        assert len(again) == 1 and all(w in again[0] for w in words), (playbook, again)
+    assert "_cassandra_confirm_operation: topology" in text("playbooks", "topology.yml")
+    assert "_cassandra_confirm_operation: create_cluster" in text("playbooks", "create_cluster.yml")
+    assert "_cassandra_confirm_operation: add_node" in text("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
+
+
+def _vars(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("vars"), dict):
+            yield node["vars"]
+        for value in node.values():
+            yield from _vars(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _vars(item)

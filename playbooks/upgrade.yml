@@ -646,6 +646,11 @@
       vars:
         _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default((_cassandra_preflight | default({})).cassandra_cluster_name | default('')) }}"
         cassandra_screen_question: "Backups, repairs and schema changes paused: go on with the snapshots?"
+        # the way out of a no: this phase's command again
+        _cassandra_confirm_again: >-
+          {{ 'upgrade' | community.cassandra.cassandra_command(
+               extra=['-e cassandra_upgrade_phase=' ~ cassandra_upgrade_phase | default('')],
+               limit=ansible_limit | default(''), **_cassandra_run_command_args) }}
         cassandra_screen:
           operation: upgrade
           summary: "{{ _cluster }} {{ cassandra_upgrade_from }} -> {{ cassandra_package_version }}, phase prepare"
