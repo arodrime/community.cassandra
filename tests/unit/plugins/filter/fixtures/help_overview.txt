@@ -226,7 +226,7 @@ Cluster 'Orders' (inventory group orders): 4 nodes, 1 more marked absent
         -e cassandra_rolling_resume=true      resumes an interrupted run (default: false)
         -e cassandra_allow_unknown_patch=true
                                               a release past the patch notes (default: false)
-        -e apply_only=java,linux              these parts, config and unit too (default: all parts)
+        -e apply_only=java,linux              only these, config and unit too (default: all parts)
         -e apply_full=true                    the whole config compare everywhere (default: false)
       Example (the settings that differ, changing nothing):
       $ ansible-playbook -i inventories/orders/hosts.yml community.cassandra.apply_config --check

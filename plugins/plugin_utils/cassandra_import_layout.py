@@ -794,11 +794,11 @@ def roles_defaults():
 @functools.lru_cache(maxsize=None)
 def roles_vars():
     """Every role's vars/main.yml (what some defaults are made of: the log patterns of each series), read once:
-    not to be changed."""
+    not to be changed; not those made of a template (rendered here as text, not as Ansible would)."""
     out = {}
     for role in roles_with_defaults():
         try:
-            out.update(role_file(role, "vars") or {})
+            out.update((k, v) for k, v in (role_file(role, "vars") or {}).items() if not _marked(v))
         except (IOError, OSError):  # (no vars/main.yml)
             continue
     return out

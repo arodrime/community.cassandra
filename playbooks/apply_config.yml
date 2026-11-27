@@ -24,17 +24,19 @@
     # (the first under --limit: target_nodes_check.yml); drift's compare: every part, whatever apply_only says
     _cassandra_preflight_refused: >-
       {{ [] if _cassandra_apply_config_compare_only | default(false) | bool or not _cassandra_apply_only_refused
-         else ('apply_config  ' ~ lookup('community.cassandra.cassandra_hosts', errors='ignore') | default('', true))
+         else (['apply_config', lookup('community.cassandra.cassandra_hosts', errors='ignore')] | select | join('  '))
               | community.cassandra.cassandra_refused(_cassandra_apply_only_refused) }}
     _cassandra_apply_only_refused: >-
       {{ (apply_only | default('') | community.cassandra.cassandra_apply_only(
-            'apply_config' | community.cassandra.cassandra_command(
-              options=['--check'] if ansible_check_mode else [],
-              extra=['-e cassandra_rolling_resume=true'] if cassandra_rolling_resume | default(false) | bool else [],
-              inventory=ansible_inventory_sources | default([]),
-              default_inventory=lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST'),
-              hosts=cassandra_hosts | default(''), limit=ansible_limit | default(''),
-              cwd=lookup('ansible.builtin.env', 'PWD')))).refused }}
+            'apply_config' | community.cassandra.cassandra_command(**_cassandra_apply_only_args))).refused }}
+    _cassandra_apply_only_args:  # (its way out: this run's command)
+      options: "{{ ['--check'] if ansible_check_mode else [] }}"
+      extra: "{{ ['-e cassandra_rolling_resume=true'] if cassandra_rolling_resume | default(false) | bool else [] }}"
+      inventory: "{{ ansible_inventory_sources | default([]) }}"
+      default_inventory: "{{ lookup('ansible.builtin.config', 'DEFAULT_HOST_LIST') }}"
+      hosts: "{{ cassandra_hosts | default('') }}"
+      limit: "{{ ansible_limit | default('') }}"
+      cwd: "{{ lookup('ansible.builtin.env', 'PWD') }}"
 
 # (a node that fails here would be left out of the plan: nothing done then)
 # _cassandra_apply_config_compare_only (the drift playbook's import): the compare alone, as a real run does it before

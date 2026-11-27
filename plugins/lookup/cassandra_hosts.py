@@ -81,6 +81,7 @@ from ansible.inventory.manager import InventoryManager
 from ansible.plugins.lookup import LookupBase
 from ansible.utils.vars import load_extra_vars
 from ansible.vars.manager import VariableManager
+from ansible.vars.hostvars import HostVars
 from jinja2 import Undefined
 
 # a host's cassandra_cluster_name that the inventory alone does not give (a fact of the node)
@@ -305,15 +306,15 @@ def in_inventory(hostvars, host):
         return False
 
 
-# the inventory read again for InventoryHostvars, once per run: {sources: (inventory, variable manager, {host: vars})}
+# the inventory read again for InventoryHostvars, once per run: {sources: Ansible's hostvars over it}
 _READ_AGAIN = {}
 
 
 class InventoryHostvars(object):
-    """The hosts' variables as the inventory gives them (its files, its group_vars and host_vars through the vars
-    plugins, the -e ones), where a play's hosts: has no hostvars yet: before the run's first play ran (a --limit
-    skips the operation playbooks' localhost one). The inventory is read again once in the run, when a host is
-    first asked; a host's variables once, when asked."""
+    """The hosts' variables as the run's hostvars give them (its inventory files, its group_vars and host_vars
+    through the vars plugins, the -e ones; a template rendered with the host's own variables), where a play's
+    hosts: has none yet: before the run's first play ran (a --limit skips the operation playbooks' localhost one).
+    The inventory is read again once in the run (a dynamic one runs again), when a host is first asked."""
 
     def __init__(self, loader):
         self._loader = loader
@@ -322,17 +323,15 @@ class InventoryHostvars(object):
         sources = tuple(context.CLIARGS.get("inventory") or ())
         if sources not in _READ_AGAIN:
             inventory = InventoryManager(loader=self._loader, sources=list(sources))
-            _READ_AGAIN[sources] = (inventory, VariableManager(loader=self._loader, inventory=inventory), {})
+            manager = VariableManager(loader=self._loader, inventory=inventory)
+            _READ_AGAIN[sources] = HostVars(inventory=inventory, variable_manager=manager, loader=self._loader)
         return _READ_AGAIN[sources]
 
     def __contains__(self, host):
-        return host is not None and self._read()[0].get_host(host) is not None
+        return host is not None and host in self._read()
 
     def __getitem__(self, host):
-        inventory, manager, read = self._read()
-        if host not in read:
-            read[host] = manager.get_vars(host=inventory.get_host(host), include_hostvars=False)
-        return read[host]
+        return self._read()[host]
 
 
 class LookupModule(LookupBase):

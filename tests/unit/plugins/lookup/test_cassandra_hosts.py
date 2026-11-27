@@ -449,7 +449,7 @@ all:
     beta:
       children:
         beta_dc1:
-          hosts: {b1: {}, b2: {cassandra_node_state: absent}}
+          hosts: {b1: {}, b2: {retired: true, cassandra_node_state: "{{ 'absent' if retired else 'present' }}"}}
   vars: {ansible_connection: local, ansible_python_interpreter: "{{ ansible_playbook_python }}"}
 """
 
@@ -459,13 +459,15 @@ all:
 def test_a_cluster_name_in_a_play_s_hosts_before_any_play_ran(tmp_path, limit):
     """CASSANDRA_CLUSTER=<a cassandra_cluster_name> of group_vars/<group>/ (next to the inventory) in the hosts: of
     a run's first play (no play ran before it: under --limit, the operation playbooks' localhost one is skipped):
-    the group named, its hosts marked absent left out; no hostvars there yet, the inventory's variables read."""
+    the group named, its hosts marked absent left out; no hostvars there yet, the inventory's variables read, a
+    template rendered with the host's own ones (audit A1: the name and the state templates of group or host vars)."""
     from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
     (tmp_path / "inv").mkdir()
     (tmp_path / "inv" / "hosts.yml").write_text(LIMITED)
-    for group, name in (("alpha", "ALPHA CLUSTER"), ("beta", "BETA CLUSTER")):
+    for group, name in (("alpha", "cassandra_cluster_name: ALPHA CLUSTER"),
+                        ("beta", "label: BETA\ncassandra_cluster_name: \"{{ label }} CLUSTER\"")):
         (tmp_path / "inv" / "group_vars" / group).mkdir(parents=True)
-        (tmp_path / "inv" / "group_vars" / group / "main.yml").write_text("cassandra_cluster_name: %s\n" % name)
+        (tmp_path / "inv" / "group_vars" / group / "main.yml").write_text(name + "\n")
     (tmp_path / "play.yml").write_text(
         "- hosts: \"{{ query('community.cassandra.cassandra_nodes') }}\"\n  gather_facts: false\n"
         "  tasks: [{debug: {msg: \"picked {{ lookup('community.cassandra.cassandra_hosts') }}\"}}]\n")
