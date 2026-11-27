@@ -375,11 +375,16 @@ def test_the_stop_after_a_no_names_the_cluster_and_the_command_again():
     assert cassandra_confirm_stop("at your request", "apply_config", "test_cluster", inventory=["/w/inv/hosts.yml"],
                                   cwd="/w") == [
         "STOPPED  apply_config  test_cluster  at your request, nothing changed",
-        "WAY OUT  run it again (with the other -e options you gave), answer yes:",
+        "WAY OUT  run it again (add the -e options you gave, if any), answer yes:",
         "  ansible-playbook -i inv/hosts.yml community.cassandra.apply_config"]
     # (audit A1) the run's --limit kept: never a whole-cluster command after a run on some nodes
     assert cassandra_confirm_stop("at your request", "rolling_restart", "test_cluster", limit="n1,n3")[-1] == (
         "  ansible-playbook community.cassandra.rolling_restart --limit n1,n3")
+    # (audit B2) the run's target variables in it; no -e in the command: the note says so
+    assert cassandra_confirm_stop("at your request", "remove_datacenter", "test_cluster",
+                                  targets={"cassandra_target_dc": "dc2", "cassandra_target_rack": ""})[1:] == [
+        "WAY OUT  run it again (with the other -e options you gave), answer yes:",
+        "  ansible-playbook community.cassandra.remove_datacenter \\", "    -e cassandra_target_dc=dc2"]
     # the caller's own command (stop_rack: its rack), as it built it
     assert cassandra_confirm_stop("at your request", "stop_rack", "test_cluster", limit="n1",
                                   again="ansible-playbook community.cassandra.stop_rack -e x=y")[-1] == (
@@ -401,12 +406,16 @@ def test_the_stop_passes_the_limit_the_caller_s_command_and_a_resume():
     def rendered(name, **variables):
         variables = dict(dict(hostvars={"localhost": {}}, _cassandra_run_command_args={"inventory": ["inv.yml"]},
                               cassandra_screen={"operation": "apply_config"}), **variables)
-        for key in ("_operation", "_cluster"):
+        variables["_target_names"] = stop["vars"]["_target_names"]
+        for key in ("_operation", "_cluster", "_targets", "_unchanged"):
             variables[key] = render_with(stop["vars"][key], variables)
-        return render_with(stop["vars"][name], variables)
+        return variables[name] if name in variables else render_with(stop["vars"][name], variables)
 
     assert rendered("_stop", ansible_limit="n3") == {
-        "inventory": ["inv.yml"], "operation": "apply_config", "cluster": "", "limit": "n3", "again": ""}
+        "inventory": ["inv.yml"], "operation": "apply_config", "cluster": "", "limit": "n3", "again": "", "targets": {}}
+    # (audit B2) the run's own target variables, for the command again; none for a step of another playbook
+    assert rendered("_stop", cassandra_target_dc="dc2", cassandra_target_rack="")["targets"] == {"cassandra_target_dc": "dc2"}
+    assert rendered("_stop", cassandra_target_nodes="n4,n5", _cassandra_screen_asked_by="topology")["targets"] == {}
     assert rendered("_stop", _cassandra_confirm_again="X")["again"] == "X"
     assert rendered("_stop", _cassandra_confirm_operation="topology")["operation"] == "topology"
     assert rendered("_unchanged") == "nothing changed"
@@ -430,7 +439,7 @@ def test_every_question_s_way_out_names_its_playbook():
         assert len(again) == 1 and all(w in again[0] for w in words), (playbook, again)
     assert "_cassandra_confirm_operation: topology" in text("playbooks", "topology.yml")
     assert "_cassandra_confirm_operation: create_cluster" in text("playbooks", "create_cluster.yml")
-    assert "_cassandra_confirm_operation: add_node" in text("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
+    assert "default('add_node')" in text("roles", "cassandra_operation", "tasks", "action_add_prepare.yml")
 
 
 def _vars(node):
@@ -442,3 +451,29 @@ def _vars(node):
     elif isinstance(node, list):
         for item in node:
             yield from _vars(item)
+
+
+def test_the_no_terminal_stop_of_a_resume_says_in_this_run():
+    import yaml
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks", "confirm_ask.yml")
+    with open(path, encoding="utf-8") as f:
+        stop = next(t for t in yaml.safe_load(f) if t["name"] == "Stop, no terminal to answer on")
+    variables = {"cassandra_rolling_resume": True, "cassandra_confirm_prompt": "Restart n1?"}
+    variables["_unchanged"] = render_with(stop["vars"]["_unchanged"], variables)
+    assert render_with(stop["ansible.builtin.fail"]["msg"], variables).startswith(
+        "No terminal to answer the confirmation on, nothing changed in this run. The question:")
+
+
+def test_add_prepare_s_way_out_names_the_playbook_that_runs_it():
+    """(audit A) action_add_prepare.yml runs for add_node, add_datacenter and topology's add step."""
+    import yaml
+    from ansible_collections.community.cassandra.tests.unit.helpers import render_with
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "roles", "cassandra_operation", "tasks",
+                        "action_add_prepare.yml")
+    with open(path, encoding="utf-8") as f:
+        write = next(t for t in yaml.safe_load(f) if t["name"] == "Write the config")
+    operation = write["vars"]["_cassandra_confirm_operation"]
+    assert render_with(operation, {}) == "add_node"
+    assert render_with(operation, {"cassandra_service_summary_operation": "add_datacenter"}) == "add_datacenter"
+    assert render_with(operation, {"_cassandra_screen_asked_by": "topology"}) == "topology"

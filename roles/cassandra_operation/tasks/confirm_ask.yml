@@ -37,13 +37,16 @@
 - name: Stop, no terminal to answer on
   ansible.builtin.fail:
     msg: |-
-      No terminal to answer the confirmation on, {{ _cassandra_confirm_unchanged | default('nothing changed') }}. The question:
+      No terminal to answer the confirmation on, {{ _unchanged }}. The question:
       {{ cassandra_confirm_prompt }}
       Run it from a terminal, or add -e {{ _cassandra_confirm_skip | default('cassandra_operation_confirm') }}=false to go on without asking.
   run_once: true
   when: _cassandra_confirm_answer == 'no_terminal'
   vars:
     cassandra_output: true
+    _unchanged: &confirm_unchanged >-
+      {{ _cassandra_confirm_unchanged | default('nothing changed in this run'
+         if cassandra_rolling_resume | default(false) | bool else 'nothing changed') }}
 
 # Only go and again carry on, whatever else the answer turned into
 - name: Stop at the operator's request
@@ -54,9 +57,7 @@
   vars: &confirm_stop_vars
     cassandra_output: true
     # (a resume: what the interrupted run did stays done)
-    _unchanged: >-
-      {{ _cassandra_confirm_unchanged | default('nothing changed in this run'
-         if cassandra_rolling_resume | default(false) | bool else 'nothing changed') }}
+    _unchanged: *confirm_unchanged
     _nl: "\n"  # a newline (Jinja keeps a backslash in its string literals here)
     # the playbook asked about (screen.yml's; _cassandra_confirm_operation: another's), the cluster, the run's
     # command: the way out runs it again
@@ -64,7 +65,18 @@
     _stop: >-
       {{ _cassandra_run_command_args | combine({'operation': _operation, 'cluster': _cluster,
                                                 'limit': ansible_limit | default(''),
-                                                'again': _cassandra_confirm_again | default('')}) }}
+                                                'again': _cassandra_confirm_again | default(''),
+                                                'targets': _targets}) }}
+    # the run's own target variables, for the command again (none for a step of another playbook: its own)
+    _targets: >-
+      {%- set out = {} -%}
+      {%- for name in _target_names if not _cassandra_screen_asked_by | default('') -%}
+      {%-   set value = lookup('ansible.builtin.vars', name, default='') -%}
+      {%-   if value | string | length -%}{%- set _ = out.update({name: value | string}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _target_names: [cassandra_target_dc, cassandra_target_rack, cassandra_target_nodes, cassandra_replace_address,
+                    cassandra_upgrade_phase]
     _operation: "{{ _cassandra_confirm_operation | default((cassandra_screen | default({})).operation | default('')) }}"
     _cluster: "{{ hostvars['localhost']._cassandra_cluster_shown | default(cassandra_cluster_name | default('')) }}"
 
