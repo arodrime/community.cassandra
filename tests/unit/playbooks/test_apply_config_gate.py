@@ -372,6 +372,18 @@ def test_apply_only_an_unknown_part_refused_first_the_others_given_or_not(tmp_pa
     assert "apply_only" not in out and "Checking the cluster" in out, out
 
 
+@pytest.mark.playbook
+def test_apply_only_an_unknown_part_with_no_cluster_named_has_no_empty_field(tmp_path):
+    # (audit r1 B2) two clusters, none named: the head without an empty cluster field (fields two spaces apart)
+    from ansible_collections.community.cassandra.tests.unit.helpers import run_playbook
+    (tmp_path / "hosts.yml").write_text(LOCAL.replace("          hosts: {a1: {}, a2: {}}\n",
+                                                      "          hosts: {a1: {}, a2: {}}\n    beta:\n      children:\n"
+                                                      "        beta_dc1:\n          hosts: {b1: {}}\n"))
+    rc, out = run_playbook(["-i", tmp_path / "hosts.yml", "community.cassandra.apply_config", "--check", "-e",
+                            "apply_only=linus"], env={"ANSIBLE_STDOUT_CALLBACK": "community.cassandra.ops"})
+    assert rc != 0 and "\nREFUSED  apply_config  nothing was changed\n" in out, out
+
+
 def test_apply_only_refuses_to_leave_out_what_a_node_needs():
     hostvars = {"n1": {"cassandra_apply_config_version": {"kind": "release"}},
                 "n2": {"cassandra_apply_config_version": {"kind": ""}, "cassandra_axonops_enabled": True},

@@ -29,7 +29,7 @@ SITES = [
     ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"), ("add_node.yml", "_cluster"),
     ("apply_config.yml", "_cluster"), ("apply_config.yml", "_cluster"), ("apply_config.yml", "_cluster"),
     ("apply_config.yml", "_cluster"),  # (the stop before any change)
-    ("apply_config.yml", "_cluster"), ("apply_config.yml", "_cluster"),  # (apply_only: a part unknown, one needed)
+    ("apply_config.yml", "_cluster"),  # (apply_only: a part a node needs left out; an unknown one: preflight)
     ("apply_config.yml", "_cluster"),  # (apply_verify)
     ("apply_config.yml", "_cluster"),  # (a resume with other parts, apply_only)
     ("apply_config.yml", "_cluster"),  # (the head of the files' diffs, the .diff file)

@@ -1909,6 +1909,17 @@ def test_layout_over_a_stock_41_pattern_equal_to_the_value_in_all():
     assert "cassandra_log_pattern" not in layout["not_compared"]
 
 
+def test_a_default_made_of_the_roles_vars_and_none_of_their_templates():
+    """(audit r2 B2) the roles' vars render a default (the series' log pattern); one of theirs made of a template is
+    left out (rendered here as text, not as Ansible would): its defaults not known (MISSING), not a wrong value."""
+    assert "_cassandra_config_log_patterns" in import_layout.roles_vars()
+    assert "_cassandra_java_tarball_entry" not in import_layout.roles_vars()
+    defaults = import_layout.roles_defaults()
+    assert import_layout.resolved("cassandra_log_pattern", {"cassandra_version": "50x"}, defaults) == LOG_UTC
+    for key in ("cassandra_java_tarball_username", "cassandra_java_tarball_password"):
+        assert import_layout.resolved(key, {}, defaults) is import_layout.MISSING, key
+
+
 def test_layout_over_a_stock_50_pattern_alone():
     """A 5.0 node at its stock pattern, no value of the user's: nothing written (the default)."""
     layout, written, differences = _stock_node_over("50x", [])
